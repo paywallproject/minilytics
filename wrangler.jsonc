@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "minilytics",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2025-09-01",
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "none",
+    // Static files skip the Worker. Anything else (client routes, unknown paths) runs it so missing pages return a real 404.
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "minilytics",
+      // Replace with the id printed by `npx wrangler d1 create minilytics`.
+      "database_id": "1fbf2b17-949c-406d-a158-195ac7290657",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
