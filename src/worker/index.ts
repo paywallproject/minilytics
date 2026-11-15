@@ -192,7 +192,9 @@ const loadSite = async (c: Context<AppEnv>, next: Next) => {
   const user = await currentUser(c);
   if (user) {
     c.set('user', user);
-    const access = siteAccessSql(c.env, user);
+    // The self-hosted admin can open any site by its link, including client accounts' sites they set up.
+    // Their site list still shows only their own (siteAccessSql).
+    const access = user.admin && !isHosted(c.env) ? { sql: '1 = 1', params: [] } : siteAccessSql(c.env, user);
     const site = await c.env.DB.prepare(`SELECT s.* FROM sites s WHERE s.id = ? AND ${access.sql}`)
       .bind(id, ...access.params)
       .first<Site>();
@@ -286,9 +288,16 @@ app.post('/api/sites', async (c) => {
   const user = c.get('user');
   if (isHosted(c.env) && !user.paid) return c.json({ error: 'Choose a plan to add websites.' }, 402);
   const b = await c.req.json<Partial<Site>>().catch(() => ({}) as Partial<Site>);
+  // Self-hosted admin sites have no owner (the admin owns those); every account owns its own.
+  const site = await createSite(c.env.DB, b, user.admin && !isHosted(c.env) ? null : user.id);
+  return typeof site === 'string' ? c.json({ error: site }, 400) : c.json(ownerSite(site));
+});
+
+/** Add a site for `ownerId` (null = the self-hosted admin). Returns an error message for bad input. */
+async function createSite(db: D1Database, b: Partial<Site>, ownerId: string | null): Promise<Site | string> {
   const domain = cleanDomain(b.domain ?? '');
-  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)) return c.json({ error: 'Enter a domain like example.com' }, 400);
-  if (b.timezone && !validTimezone(b.timezone)) return c.json({ error: 'Unknown timezone' }, 400);
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)) return 'Enter a domain like example.com';
+  if (b.timezone && !validTimezone(b.timezone)) return 'Unknown timezone';
   const tz = b.timezone || 'UTC';
   const site: Site = {
     id: randomId(8),
@@ -301,13 +310,46 @@ app.post('/api/sites', async (c) => {
     polar_webhook_secret: null,
     created_at: Date.now(),
   };
-  await c.env.DB.prepare(
-    'INSERT INTO sites (id, name, domain, timezone, currency, api_key, dodo_webhook_secret, polar_webhook_secret, created_at, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-  )
-    // Self-hosted admin sites have no owner (the admin owns those); every account owns its own.
-    .bind(site.id, site.name, site.domain, site.timezone, site.currency, site.api_key, null, null, site.created_at, user.admin && !isHosted(c.env) ? null : user.id)
+  await db
+    .prepare(
+      'INSERT INTO sites (id, name, domain, timezone, currency, api_key, dodo_webhook_secret, polar_webhook_secret, created_at, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    )
+    .bind(site.id, site.name, site.domain, site.timezone, site.currency, site.api_key, null, null, site.created_at, ownerId)
     .run();
-  return c.json(ownerSite(site));
+  return { ...site, owner_id: ownerId };
+}
+
+// ---------- admin: set up a client (self-hosted admin only)
+
+/**
+ * Create a client's email + password account and a site it owns, in one call. Safe to repeat: an existing
+ * account or site for that email + domain is reused, and the password is only returned when the account is new.
+ * The client logs in at the dashboard and sees only their own sites; the admin can open the site by its link.
+ */
+app.use('/api/admin/*', requireUser);
+app.post('/api/admin/clients', async (c) => {
+  const user = c.get('user');
+  if (!user.admin || isHosted(c.env)) return c.json({ error: 'Only the self-hosted admin can add clients.' }, 403);
+  const b = await c.req.json<Partial<Site> & { email?: string }>().catch(() => ({}) as Partial<Site> & { email?: string });
+  const email = (b.email ?? '').trim().toLowerCase();
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: 'Enter a valid email.' }, 400);
+  if (email === adminEmail(c.env)) return c.json({ error: "That's the admin's email; use the client's." }, 400);
+  if (!b.timezone || !validTimezone(b.timezone)) return c.json({ error: 'Give the timezone the client uses in Plausible.' }, 400);
+
+  let account = await c.env.DB.prepare('SELECT id FROM users WHERE email = ? AND id != ?').bind(email, ADMIN_ID).first<{ id: string }>();
+  let password: string | null = null;
+  if (!account) {
+    password = randomId(12);
+    account = { id: randomId(10) };
+    await c.env.DB.prepare('INSERT INTO users (id, email, created_at, password_hash) VALUES (?, ?, ?, ?)')
+      .bind(account.id, email, Date.now(), await hashPassword(password))
+      .run();
+  }
+  const domain = cleanDomain(b.domain ?? '');
+  const existing = await c.env.DB.prepare('SELECT * FROM sites WHERE owner_id = ? AND domain = ?').bind(account.id, domain).first<Site>();
+  const site = existing ?? (await createSite(c.env.DB, b, account.id));
+  if (typeof site === 'string') return c.json({ error: site }, 400);
+  return c.json({ account: { id: account.id, email, password, created: !!password }, site: { ...ownerSite(site), created: !existing } });
 });
 
 app.get('/api/sites/:id', (c) => c.json(c.get('readOnly') ? viewerSite(c.get('site')) : ownerSite(c.get('site'))));
