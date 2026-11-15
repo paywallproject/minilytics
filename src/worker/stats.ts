@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import type { AppEnv, Site } from './env';
-import { bucketLabels, bucketSql, resolveRange, tzOffset, type Range } from './lib/time';
+import { importedBreakdown, importedBucketSql, importedDays, importedTotals, importedTotalsStmt, loadImport, type ImportedTotals, type SiteImport } from './imports';
+import { bucketLabels, bucketSql, parseDay, resolveRange, tzOffset, type Range } from './lib/time';
 import { currencyDecimals } from './payments';
 
 /** Filters that live on the session row (clicking a row in the dashboard adds one of these). */
@@ -73,14 +74,25 @@ interface Ctx {
   range: Range;
   filters: Filters;
   offset: number;
+  /** Imported history (Plausible), or null. */
+  imp: SiteImport | null;
 }
 
-export function makeCtx(c: Context<AppEnv>): Ctx {
+export async function makeCtx(c: Context<AppEnv>): Promise<Ctx> {
   const site = c.get('site');
   const q = c.req.query();
-  const range = resolveRange(q, site.timezone, site.created_at);
-  return { db: c.env.DB, site, range, filters: parseFilters(q.filters), offset: tzOffset(site.timezone, range.to) };
+  const imp = await loadImport(c.env.DB, site);
+  // "All time" starts with the imported history when there is one.
+  const importStart = imp ? (parseDay(imp.dateFrom, site.timezone) ?? site.created_at) : site.created_at;
+  const range = resolveRange(q, site.timezone, Math.min(site.created_at, importStart));
+  return { db: c.env.DB, site, range, filters: parseFilters(q.filters), offset: tzOffset(site.timezone, range.to), imp };
 }
+
+/**
+ * Imported data is daily totals per dimension, so it can't be cut by a filter ("Google visitors in Ohio").
+ * With filters on, reports show Minilytics' own data only.
+ */
+const usableImport = (ctx: Ctx) => (hasFilters(ctx.filters) ? null : ctx.imp);
 
 function sessionsWhere(ctx: Ctx, from = ctx.range.from, to = ctx.range.to) {
   const f = filterSql(ctx.filters);
@@ -106,7 +118,7 @@ function paymentsFrom(ctx: Ctx, from = ctx.range.from, to = ctx.range.to) {
 const KPI_SQL = (where: string) => `
   SELECT COUNT(DISTINCT s.visitor_id) AS visitors, COUNT(*) AS sessions, COALESCE(SUM(s.pageviews), 0) AS pageviews,
          COALESCE(SUM(CASE WHEN s.pageviews <= 1 AND s.goals = 0 THEN 1 ELSE 0 END), 0) AS bounces,
-         COALESCE(AVG(s.duration), 0) AS avg_duration
+         COALESCE(SUM(s.duration), 0) AS duration
   FROM sessions s WHERE ${where}`;
 
 const REVENUE_SQL = (from: string) => `
@@ -120,12 +132,24 @@ interface KpiRow {
   sessions: number;
   pageviews: number;
   bounces: number;
-  avg_duration: number;
+  duration: number;
 }
 interface RevRow {
   revenue: number;
   customers: number;
   payments: number;
+}
+
+/** Minilytics' own numbers plus imported ones for the same period. Visitors are summed per day, so a person
+ *  who came on two imported days counts twice: the closest an aggregate export allows. */
+function withImported(k: KpiRow, i: ImportedTotals): KpiRow {
+  return {
+    visitors: k.visitors + i.visitors,
+    sessions: k.sessions + i.sessions,
+    pageviews: k.pageviews + i.pageviews,
+    bounces: k.bounces + i.bounces,
+    duration: k.duration + i.duration,
+  };
 }
 
 function kpis(k: KpiRow, r: RevRow) {
@@ -134,7 +158,7 @@ function kpis(k: KpiRow, r: RevRow) {
     sessions: k.sessions,
     pageviews: k.pageviews,
     bounceRate: k.sessions ? k.bounces / k.sessions : 0,
-    avgDuration: Math.round(k.avg_duration),
+    avgDuration: k.sessions ? Math.round(k.duration / k.sessions) : 0,
     revenue: r.revenue,
     payments: r.payments,
     customers: r.customers,
@@ -154,8 +178,26 @@ export async function overview(ctx: Ctx) {
   const sb = bucketSql('s.started_at', range.granularity, ctx.offset);
   const pb = bucketSql('p.ts', range.granularity, ctx.offset);
   const now = Date.now();
+  const imp = usableImport(ctx);
+  const tz = site.timezone;
+  const prevRange = { from: prevFrom, to: range.from };
+  const optional = [
+    importedTotalsStmt(db, imp, range, tz),
+    importedTotalsStmt(db, imp, prevRange, tz),
+    (() => {
+      const days = imp && importedDays(imp, range.from, range.to, tz);
+      if (!imp || !days) return null;
+      return db
+        .prepare(
+          `SELECT ${importedBucketSql(range.granularity)} AS b, SUM(visitors) AS visitors, SUM(pageviews) AS pageviews
+           FROM imported_stats WHERE import_id = ? AND dim = 'total' AND date >= ? AND date <= ? GROUP BY b`,
+        )
+        .bind(imp.id, days.first, days.last);
+    })(),
+  ];
+  const extra = optional.filter((s): s is D1PreparedStatement => !!s);
 
-  const [k1, k0, r1, r0, online, ts, tr] = await db.batch([
+  const [k1, k0, r1, r0, online, ts, tr, ...rest] = await db.batch([
     db.prepare(KPI_SQL(cur.sql)).bind(...cur.params),
     db.prepare(KPI_SQL(prev.sql)).bind(...prev.params),
     db.prepare(REVENUE_SQL(curPay.sql)).bind(...curPay.params),
@@ -175,9 +217,19 @@ export async function overview(ctx: Ctx) {
          FROM ${curPay.sql} GROUP BY b`,
       )
       .bind(...curPay.params),
+    ...extra,
   ]);
+  let n = 0;
+  const [i1, i0, its] = optional.map((s) => (s ? rest[n++] : undefined));
 
-  const visitorsBy = new Map((ts.results as any[]).map((r) => [r.b, r]));
+  const visitorsBy = new Map((ts.results as any[]).map((r) => [r.b, { ...r }]));
+  for (const r of (its?.results ?? []) as any[]) {
+    const v = visitorsBy.get(r.b);
+    if (v) {
+      v.visitors += r.visitors;
+      v.pageviews = (v.pageviews ?? 0) + r.pageviews;
+    } else visitorsBy.set(r.b, r);
+  }
   const revenueBy = new Map((tr.results as any[]).map((r) => [r.b, r]));
   const labels = bucketLabels(range, ctx.offset);
   const series = labels.map((b) => ({
@@ -192,11 +244,19 @@ export async function overview(ctx: Ctx) {
     range,
     currency: site.currency,
     decimals: currencyDecimals(site.currency),
-    current: kpis(k1.results[0] as KpiRow, r1.results[0] as RevRow),
-    previous: kpis(k0.results[0] as KpiRow, r0.results[0] as RevRow),
+    current: kpis(withImported(k1.results[0] as KpiRow, importedTotals(i1)), r1.results[0] as RevRow),
+    previous: kpis(withImported(k0.results[0] as KpiRow, importedTotals(i0)), r0.results[0] as RevRow),
+    imported: importNote(ctx),
     online: (online.results[0] as { n: number }).n,
     series,
   };
+}
+
+/** Which imported days the current period includes, so the dashboard can say so. */
+function importNote(ctx: Ctx) {
+  const days = ctx.imp && importedDays(ctx.imp, ctx.range.from, ctx.range.to, ctx.site.timezone);
+  if (!days) return null;
+  return { from: days.first, to: days.last, hidden: hasFilters(ctx.filters) };
 }
 
 /** Session dimensions, keyed by the name the dashboard asks for. */
@@ -232,8 +292,41 @@ export interface BreakdownRow {
 }
 
 export async function breakdown(ctx: Ctx, dim: string, limit = 100): Promise<BreakdownRow[]> {
-  const { db } = ctx;
   const lim = Math.max(1, Math.min(500, limit));
+  const [own, imported] = await Promise.all([
+    ownBreakdown(ctx, dim, lim),
+    importedBreakdown(ctx.db, usableImport(ctx), ctx.range, ctx.site.timezone, dim, lim),
+  ]);
+  return imported.length ? addImported(own, imported, lim) : own;
+}
+
+/** Add imported rows into Minilytics' own, by label, and keep the top `lim` by visitors. */
+export function addImported(
+  own: BreakdownRow[],
+  imported: { label: string | null; visitors: number; pageviews: number; extra: string | null }[],
+  lim: number,
+): BreakdownRow[] {
+  const rows = own.map((r) => ({ ...r }));
+  const byLabel = new Map(rows.map((r) => [r.label, r]));
+  for (const i of imported) {
+    const r = byLabel.get(i.label);
+    if (r) {
+      r.visitors += i.visitors;
+      if (r.pageviews !== undefined) r.pageviews += i.pageviews;
+      r.extra ??= i.extra;
+    } else {
+      const row: BreakdownRow = { label: i.label, visitors: i.visitors, pageviews: i.pageviews, revenue: 0, customers: 0, extra: i.extra };
+      rows.push(row);
+      byLabel.set(i.label, row);
+    }
+  }
+  // Rows that only made money (no visits in the period) stay at the end, as in a normal breakdown.
+  const visited = rows.filter((r) => r.visitors > 0).sort((a, b) => b.visitors - a.visitors).slice(0, lim);
+  return [...visited, ...rows.filter((r) => r.visitors <= 0)];
+}
+
+async function ownBreakdown(ctx: Ctx, dim: string, lim: number): Promise<BreakdownRow[]> {
+  const { db } = ctx;
 
   if (SESSION_DIMS[dim]) {
     const col = SESSION_DIMS[dim];

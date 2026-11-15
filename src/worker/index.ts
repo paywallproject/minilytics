@@ -6,6 +6,7 @@ import { ADMIN_ID, adminEmail, clearSession, currentUser, emailLogin, googleCall
 import { billingWebhook, checkout, planInfo } from './billing';
 import { hashPassword, passwordsMatch, randomId, verifyPassword } from './lib/crypto';
 import { handleDodoWebhook, handleGoalApi, handlePaymentApi, handlePolarWebhook, handleStripeWebhook, learnDodoProducts, rematchPayments } from './payments';
+import { addImportRows, clearImports, deleteImport, finishImport, getImport, startImport } from './imports';
 import { rememberOwnerDevice } from './owner';
 import { breakdown, customers, funnel, makeCtx, overview, realtime, sparklines, visitorProfile, visitors, type FunnelStep } from './stats';
 
@@ -368,6 +369,7 @@ app.post('/api/sites/:id/rotate-key', async (c) => {
 
 app.delete('/api/sites/:id', async (c) => {
   const id = c.get('site').id;
+  await clearImports(c.env.DB, id).catch(() => {}); // no imports table before migration 0011
   await c.env.DB.batch(
     // Everything stored for the site, so deleting it really removes its visitors' data.
     ['events', 'sessions', 'visitors', 'payments', 'funnels', 'payment_claims', 'pending_payments', 'dodo_products'].map((t) =>
@@ -380,11 +382,11 @@ app.delete('/api/sites/:id', async (c) => {
 
 // ---------- stats
 
-app.get('/api/sites/:id/overview', async (c) => c.json(await overview(makeCtx(c))));
+app.get('/api/sites/:id/overview', async (c) => c.json(await overview(await makeCtx(c))));
 
 app.get('/api/sites/:id/breakdown', async (c) => {
   try {
-    return c.json(await breakdown(makeCtx(c), c.req.query('dim') ?? 'source', Number(c.req.query('limit')) || 100));
+    return c.json(await breakdown(await makeCtx(c), c.req.query('dim') ?? 'source', Number(c.req.query('limit')) || 100));
   } catch (e) {
     return c.json({ error: (e as Error).message }, 400);
   }
@@ -408,8 +410,8 @@ app.post('/api/sites/:id/pending-payments', async (c) => {
 });
 app.post('/api/sites/:id/rematch', async (c) => c.json(await rematchPayments(c.env.DB, c.get('site'))));
 app.get('/api/sites/:id/realtime', async (c) => c.json(await realtime(c.env.DB, c.get('site'))));
-app.get('/api/sites/:id/customers', async (c) => c.json(await customers(makeCtx(c))));
-app.get('/api/sites/:id/visitors', async (c) => c.json(await visitors(makeCtx(c))));
+app.get('/api/sites/:id/customers', async (c) => c.json(await customers(await makeCtx(c))));
+app.get('/api/sites/:id/visitors', async (c) => c.json(await visitors(await makeCtx(c))));
 app.get('/api/sites/:id/visitors/:vid', async (c) =>
   c.json(await visitorProfile(c.env.DB, c.get('site'), c.req.param('vid'))),
 );
@@ -443,8 +445,15 @@ app.get('/api/sites/:id/funnels/:fid/stats', async (c) => {
     .bind(c.req.param('fid'), c.get('site').id)
     .first<{ steps: string }>();
   if (!f) return c.json({ error: 'funnel not found' }, 404);
-  return c.json(await funnel(makeCtx(c), JSON.parse(f.steps)));
+  return c.json(await funnel(await makeCtx(c), JSON.parse(f.steps)));
 });
+
+// History imported from Plausible (owner only: none of these are public reads).
+app.get('/api/sites/:id/import', getImport);
+app.post('/api/sites/:id/import', startImport);
+app.post('/api/sites/:id/import/:iid/rows', addImportRows);
+app.post('/api/sites/:id/import/:iid/finish', finishImport);
+app.delete('/api/sites/:id/import', deleteImport);
 
 app.all('/api/*', (c) => c.json({ error: 'not found' }, 404));
 

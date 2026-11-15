@@ -29,11 +29,22 @@ export function startOfDay(at: number, tz: string): number {
 }
 
 /** Parse YYYY-MM-DD as midnight in the site's timezone. */
-function parseDay(s: string, tz: string): number | null {
+export function parseDay(s: string, tz: string): number | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
   if (!m) return null;
   const utc = Date.UTC(+m[1], +m[2] - 1, +m[3]);
   return utc - tzOffset(tz, utc);
+}
+
+/** The site-time day (YYYY-MM-DD) containing `at`. */
+export function dayOf(at: number, tz: string): string {
+  return new Date(at + tzOffset(tz, at)).toISOString().slice(0, 10);
+}
+
+/** YYYY-MM-DD plus `n` days. */
+export function addDays(day: string, n: number): string {
+  const [y, m, d] = day.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
 }
 
 export type Granularity = 'hour' | 'day' | 'week' | 'month';

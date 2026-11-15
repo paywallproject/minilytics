@@ -70,6 +70,8 @@ export interface Overview {
   current: Kpis;
   previous: Kpis;
   online: number;
+  /** Imported (Plausible) days included in this period; `hidden` when filters keep them out. */
+  imported?: { from: string; to: string; hidden: boolean } | null;
   series: { bucket: string; visitors: number; pageviews: number; revenue: number; payments: number }[];
 }
 

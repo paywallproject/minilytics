@@ -5,7 +5,8 @@ import { Favicon } from '../components/Icons';
 import { CurrencySelect, TimezoneSelect } from '../components/SiteFields';
 import { buildAiPrompt } from '../lib/aiPrompt';
 import { api, type Site } from '../lib/api';
-import { fmtMoney } from '../lib/format';
+import { fmtMoney, fmtNumber } from '../lib/format';
+import { parsePlausibleExport, type ImportRow, type ParsedImport } from '../../shared/plausible';
 
 const DOCS = 'https://github.com/surendrapandar/minilytics#';
 
@@ -181,6 +182,8 @@ window.minilytics('identify', { email: user.email, name: user.name });`}</Code>
 
       <LinkBuilder domain={site.domain} />
 
+      <PlausibleImport site={site} />
+
       <PublicDashboard site={site} origin={origin} onChange={(on) => save({ public: on ? 1 : 0 }, on ? 'Dashboard is public' : 'Dashboard is private')} />
 
       <Section title="General">
@@ -226,6 +229,178 @@ window.minilytics('identify', { email: user.email, name: user.name });`}</Code>
         </button>
       </Section>
     </div>
+  );
+}
+
+interface ImportInfo {
+  id: string;
+  status: 'importing' | 'done';
+  date_from: string;
+  date_to: string;
+  rows_total: number;
+  rows_done: number;
+  created_at: number;
+}
+
+const CHUNK = 5000;
+
+/** Bring over history from a Plausible CSV export. The zip is read in the browser and sent in chunks. */
+function PlausibleImport({ site }: { site: Site }) {
+  const [current, setCurrent] = useState<ImportInfo | null>(null);
+  const [parsed, setParsed] = useState<ParsedImport | null>(null);
+  const [fileName, setFileName] = useState('');
+  const [busy, setBusy] = useState<'' | 'reading' | 'uploading' | 'removing'>('');
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState('');
+
+  const load = () => api<ImportInfo | null>(`/api/sites/${site.id}/import`).then(setCurrent).catch(() => {});
+  useEffect(() => {
+    load();
+  }, [site.id]);
+
+  async function pick(file: File | undefined) {
+    if (!file) return;
+    setError('');
+    setParsed(null);
+    setFileName(file.name);
+    setBusy('reading');
+    try {
+      setParsed(await parsePlausibleExport(await file.arrayBuffer(), site.domain));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function upload(p: ParsedImport) {
+    setError('');
+    setBusy('uploading');
+    setProgress(0);
+    try {
+      const { id } = await api<{ id: string }>(`/api/sites/${site.id}/import`, {
+        method: 'POST',
+        json: { source: 'plausible', date_from: p.dateFrom, date_to: p.dateTo, rows: p.rows.length },
+      });
+      for (let i = 0; i < p.rows.length; i += CHUNK) {
+        await sendChunk(id, p.rows.slice(i, i + CHUNK));
+        setProgress(Math.min(1, (i + CHUNK) / p.rows.length));
+      }
+      await api(`/api/sites/${site.id}/import/${id}/finish`, { method: 'POST' });
+      setParsed(null);
+      await load();
+    } catch (e) {
+      setError(`The import stopped: ${(e as Error).message}. Your previous data is unchanged; try again.`);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function sendChunk(id: string, rows: ImportRow[]) {
+    // One retry covers a dropped connection mid-import.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await api(`/api/sites/${site.id}/import/${id}/rows`, { method: 'POST', json: { rows } });
+      } catch (e) {
+        if (attempt >= 1) throw e;
+      }
+    }
+  }
+
+  async function remove() {
+    if (!confirm('Remove the imported Plausible data from this site? Data Minilytics collected itself is kept.')) return;
+    setBusy('removing');
+    try {
+      await api(`/api/sites/${site.id}/import`, { method: 'DELETE' });
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  const done = current?.status === 'done' ? current : null;
+  // Plausible names the export after the site, e.g. example_com_20261115.zip.
+  const otherSite = fileName && !fileName.startsWith(site.domain.replace(/\./g, '_') + '_');
+
+  return (
+    <Section
+      title="Import from Plausible"
+      desc={
+        <>
+          Bring over your history. In Plausible, open <b>Site settings → Imports &amp; Exports → Export data</b> and upload the zip you get by email.
+        </>
+      }
+    >
+      {done && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm">
+          <span>
+            ✓ Plausible data from <b>{done.date_from}</b> to <b>{done.date_to}</b> is imported.
+          </span>
+          <button className="btn" disabled={!!busy} onClick={remove}>
+            {busy === 'removing' ? 'Removing…' : 'Remove'}
+          </button>
+        </div>
+      )}
+
+      {!parsed && (
+        <label className={`btn cursor-pointer ${busy ? 'pointer-events-none opacity-50' : ''}`}>
+          {busy === 'reading' ? 'Reading the export…' : done ? 'Import a new export (replaces this one)' : 'Choose Plausible export (.zip)'}
+          <input type="file" accept=".zip,application/zip" className="hidden" onChange={(e) => pick(e.target.files?.[0])} onClick={(e) => ((e.target as HTMLInputElement).value = '')} />
+        </label>
+      )}
+
+      {parsed && (
+        <div className="space-y-3 text-sm">
+          <div className="rounded-xl border border-stone-200 px-4 py-3">
+            <p>
+              <b>{fmtNumber(parsed.visitors)}</b> visitors and <b>{fmtNumber(parsed.pageviews)}</b> pageviews from <b>{parsed.dateFrom}</b> to{' '}
+              <b>{parsed.dateTo}</b>.
+            </p>
+            {parsed.skippedPages > 0 && (
+              <p className="mt-1 text-stone-500">
+                {fmtNumber(parsed.skippedPages)} page rows on other hostnames (copies of the site, translation proxies) are left out, as live tracking does.
+              </p>
+            )}
+            {otherSite && <p className="mt-1 text-amber-700">This file's name doesn't match {site.domain}. Make sure it's the right site's export.</p>}
+          </div>
+          {busy === 'uploading' ? (
+            <div>
+              <div className="h-2 overflow-hidden rounded-full bg-stone-100">
+                <div className="h-full bg-ink transition-all" style={{ width: `${Math.round(progress * 100)}%` }} />
+              </div>
+              <p className="mt-1 text-stone-500">Importing… {Math.round(progress * 100)}%. Keep this page open.</p>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <button className="btn-dark" onClick={() => upload(parsed)}>
+                Import
+              </button>
+              <button className="btn" onClick={() => setParsed(null)}>
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+
+      <details className="mt-4 text-sm">
+        <summary className="cursor-pointer font-medium text-stone-600">What gets imported</summary>
+        <div className="mt-2 space-y-2 text-stone-500">
+          <p>
+            Visitors, pageviews, bounce rate and session time, plus channels, referrers, campaigns, pages, entry pages, countries, browsers, OS,
+            devices and custom events. Imported days fill the dashboard up to the day Minilytics started collecting, so no day is counted twice.
+          </p>
+          <p>
+            Plausible exports daily totals, not individual visits. So imported history has no revenue attribution, visitor profiles, journeys or
+            funnels; it's hidden while a filter is on; and over multi-day periods someone who visited on two days counts as two visitors.
+          </p>
+        </div>
+      </details>
+    </Section>
   );
 }
 

@@ -124,6 +124,14 @@ export function Dashboard({ siteId, fallback, header }: { siteId: string; fallba
           <OverviewCard data={overview} onLive={() => setLive(true)} />
         </div>
 
+        {overview?.imported && (
+          <p className="mt-2 text-xs text-stone-500">
+            {overview.imported.hidden
+              ? `Imported Plausible history (${overview.imported.from} to ${overview.imported.to}) isn't included while a filter is on.`
+              : `Includes imported Plausible data from ${overview.imported.from} to ${overview.imported.to} (no revenue attribution for those days).`}
+          </p>
+        )}
+
         <div className="mt-5 grid gap-5 lg:grid-cols-2">
           <Panel
             tabs={[

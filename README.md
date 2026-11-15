@@ -162,6 +162,21 @@ At 5–10k visitors a month you'll use a few percent of this. If you outgrow it,
 - **Make a site public**: site *Settings* → *Public dashboard*. Anyone with the link sees the full dashboard
   without logging in (including customers, visitor profiles and live view). Settings, keys and secrets stay private.
 
+## Import from Plausible
+
+Moving from Plausible (cloud or self-hosted Community Edition)? Bring your history with you:
+
+1. In Plausible, open **Site settings → Imports & Exports → Export data**. You get a zip by email.
+2. In Minilytics, open the site's **Settings → Import from Plausible** and choose the zip. It's read in your browser,
+   you see a summary, then it's uploaded in chunks. Importing again replaces the previous import; **Remove** deletes it.
+
+Imported days fill the dashboard up to the day Minilytics started collecting on the site, so no day is counted twice.
+Visitors, pageviews, bounce rate, session time, channels, referrers, campaigns, pages, entry pages, countries, browsers,
+OS, devices and custom events come over. Plausible exports daily totals rather than individual visits, so imported
+history has no revenue attribution, visitor profiles, journeys or funnels, it is hidden while a filter is on, and over
+multi-day periods a person who visited on several days counts once per day. A large export (a few hundred thousand rows)
+fits comfortably in the Workers Paid plan's D1 limits; on the free plan it can exceed the daily write limit.
+
 ## Run it as a hosted SaaS (optional)
 
 By default Minilytics uses email + password logins. Set the Google values below and it becomes a hosted product:

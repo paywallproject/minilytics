@@ -1,4 +1,5 @@
 import type { Context } from 'hono';
+import { belongsTo, normalizePath, stripWww } from '../shared/paths';
 import { classify } from '../shared/sources';
 import { siteOwnerActive } from './auth';
 import { getSite, type AppEnv, type Site } from './env';
@@ -27,25 +28,7 @@ const clip = (s: unknown, n = 255): string | null =>
 
 const isId = (s: unknown): s is string => typeof s === 'string' && /^[\w-]{8,64}$/.test(s);
 
-export function normalizePath(pathname: string): string {
-  let p = pathname || '/';
-  try {
-    p = decodeURI(p);
-  } catch {}
-  if (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
-  return p.slice(0, 500);
-}
-
-function stripWww(h: string) {
-  return h.replace(/^www\./, '').toLowerCase();
-}
-
-/** Is `hostname` the site's domain or one of its subdomains? */
-export function belongsTo(hostname: string, domain: string): boolean {
-  const h = stripWww(hostname);
-  const d = stripWww(domain);
-  return h === d || h.endsWith('.' + d);
-}
+export { belongsTo, normalizePath };
 
 export async function handleEvent(c: Context<AppEnv>) {
   const raw = await c.req.text();
