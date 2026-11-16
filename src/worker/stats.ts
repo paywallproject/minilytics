@@ -128,7 +128,9 @@ const KPI_SQL = (where: string) => `
 const REVENUE_SQL = (from: string) => `
   SELECT COALESCE(SUM(p.amount), 0) AS revenue,
          COUNT(DISTINCT CASE WHEN p.kind = 'payment' AND p.renewal = 0 THEN COALESCE(p.visitor_id, p.id) END) AS customers,
-         COALESCE(SUM(CASE WHEN p.kind = 'payment' THEN 1 ELSE 0 END), 0) AS payments
+         COALESCE(SUM(CASE WHEN p.kind = 'payment' THEN 1 ELSE 0 END), 0) AS payments,
+         COALESCE(SUM(CASE WHEN p.kind = 'payment' AND p.renewal = 1 THEN p.amount ELSE 0 END), 0) AS renewals,
+         COALESCE(SUM(CASE WHEN p.session_id IS NULL THEN p.amount ELSE 0 END), 0) AS unattributed
   FROM ${from}`;
 
 interface KpiRow {
@@ -142,6 +144,8 @@ interface RevRow {
   revenue: number;
   customers: number;
   payments: number;
+  renewals: number;
+  unattributed: number;
 }
 
 /** Minilytics' own numbers plus imported ones for the same period. Visitors are summed per day, so a person
@@ -164,6 +168,10 @@ function kpis(k: KpiRow, r: RevRow) {
     bounceRate: k.sessions ? k.bounces / k.sessions : 0,
     avgDuration: k.sessions ? Math.round(k.duration / k.sessions) : 0,
     revenue: r.revenue,
+    /** Automatic subscription renewals: part of revenue, but no visit made them happen. */
+    renewals: r.renewals,
+    /** Revenue that isn't linked to any visit, so no channel, page or country gets it. */
+    unattributed: r.unattributed,
     payments: r.payments,
     customers: r.customers,
     conversionRate: k.visitors ? r.customers / k.visitors : 0,
@@ -217,7 +225,8 @@ export async function overview(ctx: Ctx) {
       .bind(...cur.params),
     db
       .prepare(
-        `SELECT ${pb} AS b, SUM(p.amount) AS revenue, SUM(CASE WHEN p.kind = 'payment' THEN 1 ELSE 0 END) AS payments
+        `SELECT ${pb} AS b, SUM(p.amount) AS revenue, SUM(CASE WHEN p.kind = 'payment' THEN 1 ELSE 0 END) AS payments,
+                SUM(CASE WHEN p.kind = 'payment' AND p.renewal = 1 THEN p.amount ELSE 0 END) AS renewals
          FROM ${curPay.sql} GROUP BY b`,
       )
       .bind(...curPay.params),
@@ -241,6 +250,7 @@ export async function overview(ctx: Ctx) {
     visitors: visitorsBy.get(b)?.visitors ?? 0,
     pageviews: visitorsBy.get(b)?.pageviews ?? 0,
     revenue: revenueBy.get(b)?.revenue ?? 0,
+    renewals: revenueBy.get(b)?.renewals ?? 0,
     payments: revenueBy.get(b)?.payments ?? 0,
   }));
 

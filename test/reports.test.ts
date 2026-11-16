@@ -58,6 +58,13 @@ describe('the email', () => {
     expect(mail.html).toContain('United States');
     expect(mail.text).toContain('Visitors: 1,200 (+20%)');
   });
+  it('separates automatic renewals from new revenue', () => {
+    const some = renderEmail({ ...data, kpis: { ...data.kpis, renewals: 10_000 } }, null, links);
+    expect(some.text).toContain('$100.00 was automatic subscription renewals; $25.00 was new.');
+    const all = renderEmail({ ...data, kpis: { ...data.kpis, renewals: 12_500 } }, null, links);
+    expect(all.html).toContain('All revenue was automatic subscription renewals.');
+    expect(mail.text).not.toContain('renewals');
+  });
   it('escapes everything that came from visitors', () => {
     expect(mail.html).not.toContain('<script>');
     expect(mail.html).toContain('&lt;script&gt;');

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { usePref } from '../lib/prefs';
 import { Area, Bar, CartesianGrid, ComposedChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { Kpis, Overview } from '../lib/api';
@@ -37,6 +38,7 @@ export function OverviewCard({ data, onLive }: { data: Overview | null; onLive: 
     : [];
 
   const g = data?.range.granularity ?? 'day';
+  const chartData = useMemo(() => (data?.series ?? []).map((s) => ({ ...s, newRevenue: s.revenue - (s.renewals ?? 0) })), [data]);
 
   return (
     <div className="card overflow-hidden">
@@ -53,7 +55,14 @@ export function OverviewCard({ data, onLive }: { data: Overview | null; onLive: 
               {k.label}
             </div>
             <div className="mt-1 text-[28px] font-semibold leading-tight tracking-tight">{k.value}</div>
-            <Change cur={c![k.key as keyof Kpis]} prev={p![k.key as keyof Kpis]} invert={k.invert} />
+            <div className="flex flex-wrap items-center gap-x-2">
+              <Change cur={c![k.key as keyof Kpis]} prev={p![k.key as keyof Kpis]} invert={k.invert} />
+              {k.key === 'revenue' && c!.renewals > 0 && (
+                <span className="text-xs text-stone-400" title="Automatic subscription renewals: no visit involved">
+                  {c!.renewals >= c!.revenue ? 'all renewals' : `${money(c!.renewals, true)} renewals`}
+                </span>
+              )}
+            </div>
           </button>
         ))}
         {data && (
@@ -78,7 +87,7 @@ export function OverviewCard({ data, onLive }: { data: Overview | null; onLive: 
       <div className="h-[340px] px-2 pb-3 pt-6 sm:px-4">
         {data && (
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={data.series} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
+            <ComposedChart data={chartData} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="vis" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#8dbdf0" stopOpacity={0.35} />
@@ -126,13 +135,18 @@ export function OverviewCard({ data, onLive }: { data: Overview | null; onLive: 
                       <Row color="bg-visitors" label="Visitors" value={fmtNumber(d.visitors)} />
                       <Row color="bg-stone-300" label="Pageviews" value={fmtNumber(d.pageviews)} />
                       <Row color="bg-revenue" label="Revenue" value={money(d.revenue)} />
-                      {d.payments > 0 && <Row color="bg-revenueSoft" label="Payments" value={String(d.payments)} />}
+                      {d.renewals > 0 && <Row color="bg-revenueSoft" label="Renewals" value={money(d.renewals)} />}
+                      {d.payments > 0 && <Row color="bg-stone-200" label="Payments" value={String(d.payments)} />}
                     </div>
                   );
                 }}
               />
               {!hidden.revenue && (
-                <Bar yAxisId="r" dataKey="revenue" fill="#e07b5f" radius={[4, 4, 0, 0]} maxBarSize={36} isAnimationActive={false} />
+                <>
+                  {/* New revenue at the bottom, automatic renewals stacked on top in a lighter shade. */}
+                  <Bar yAxisId="r" dataKey="newRevenue" stackId="rev" fill="#e07b5f" maxBarSize={36} isAnimationActive={false} />
+                  <Bar yAxisId="r" dataKey="renewals" stackId="rev" fill="#f0b8a6" radius={[4, 4, 0, 0]} maxBarSize={36} isAnimationActive={false} />
+                </>
               )}
               {!hidden.visitors && (
                 <Area

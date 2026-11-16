@@ -5,7 +5,7 @@ import { siteOwnerActive } from './auth';
 import { getSite, type AppEnv, type Site } from './env';
 import { isOwnerVisit } from './owner';
 import { isBot, parseUA } from './lib/ua';
-import { creditedSessionSql, dodoProductOfLink, learnDodoProducts } from './payments';
+import { creditedSessionSql, dodoProductOfLink, firstTouchSessionSql, learnDodoProducts } from './payments';
 
 const TYPES = new Set(['pageview', 'goal', 'outbound', 'ping', 'identify']);
 const MAX_PING_MS = 10 * 60_000;
@@ -133,13 +133,26 @@ export async function ingest(
 
   if (t === 'identify') {
     const p = body.p ?? {};
+    const email = clip(p.email, 200)?.toLowerCase() ?? null;
     await db.batch([
       db.prepare('INSERT OR IGNORE INTO visitors (site_id, id, first_seen) VALUES (?, ?, ?)').bind(site.id, vid, now),
       db
         .prepare(
           'UPDATE visitors SET user_id = COALESCE(?, user_id), email = COALESCE(?, email), name = COALESCE(?, name) WHERE site_id = ? AND id = ?',
         )
-        .bind(clip(p.user_id, 128), clip(p.email, 200)?.toLowerCase() ?? null, clip(p.name, 128), site.id, vid),
+        .bind(clip(p.user_id, 128), email, clip(p.name, 128), site.id, vid),
+      // A subscriber who logs in now is linked to their earlier payments that had no visit (e.g. automatic
+      // renewals), credited to how they first arrived. Payments matched some other way are left alone.
+      ...(email
+        ? [
+            db
+              .prepare(
+                `UPDATE payments SET visitor_id = ?, matched_by = 'email', session_id = (${firstTouchSessionSql()})
+                 WHERE site_id = ? AND email = ? AND (visitor_id IS NULL OR (visitor_id = ? AND session_id IS NULL))`,
+              )
+              .bind(vid, site.id, vid, site.id, email, vid),
+          ]
+        : []),
     ]);
     return;
   }

@@ -137,6 +137,13 @@ export function Dashboard({ siteId, fallback, header }: { siteId: string; fallba
               : `Includes imported Plausible data from ${overview.imported.from} to ${overview.imported.to} (no revenue attribution for those days).`}
           </p>
         )}
+        {dash && overview && overview.current.unattributed > 0 && Object.keys(q.filters).length === 0 && (
+          <p className="mt-2 text-xs text-stone-500">
+            {dash.money(overview.current.unattributed)} of the {dash.money(overview.current.revenue)} revenue isn't linked to a visit
+            {overview.current.renewals > 0 ? ' (mostly automatic subscription renewals)' : ''}, so it isn't credited to a channel, page or
+            country below. Renewals are linked to how the subscriber first arrived once they visit while logged in.
+          </p>
+        )}
 
         <div className="mt-5 grid gap-5 lg:grid-cols-2">
           <Panel

@@ -62,6 +62,10 @@ export interface Kpis {
   bounceRate: number;
   avgDuration: number;
   revenue: number;
+  /** Part of revenue from automatic subscription renewals. */
+  renewals: number;
+  /** Revenue not linked to any visit (no channel, page or country gets it). */
+  unattributed: number;
   payments: number;
   customers: number;
   conversionRate: number;
@@ -77,7 +81,7 @@ export interface Overview {
   online: number;
   /** Imported (Plausible) days included in this period; `hidden` when filters keep them out. */
   imported?: { from: string; to: string; hidden: boolean } | null;
-  series: { bucket: string; visitors: number; pageviews: number; revenue: number; payments: number }[];
+  series: { bucket: string; visitors: number; pageviews: number; revenue: number; renewals: number; payments: number }[];
 }
 
 export interface BreakdownRow {

@@ -32,6 +32,15 @@ export function creditedSessionSql() {
 }
 
 /**
+ * For a renewal, the visit that gets the credit is how the subscriber first arrived: their first visit that came from
+ * somewhere, else their first visit. A renewal is never caused by today's visit.
+ */
+export function firstTouchSessionSql() {
+  return `SELECT id FROM sessions WHERE site_id = ? AND visitor_id = ?
+          ORDER BY (channel != 'Direct') DESC, started_at ASC LIMIT 1`;
+}
+
+/**
  * Work out which visitor paid and which visit gets the credit, trying the most reliable signal first:
  *  1. metadata   ml_visitor_id passed to the checkout
  *  2. return_page  the visitor landed on your return URL with ?payment_id= (Dodo), ?session_id= (Stripe) or ?checkout_id= (Polar)
@@ -86,7 +95,9 @@ async function attribute(db: D1Database, site: Site, p: PaymentInput) {
 
   let sessionId: string | null = null;
   if (visitorId) {
-    const s = await db.prepare(creditedSessionSql()).bind(site.id, visitorId, p.ts + 60_000).first<{ id: string }>();
+    const s = renewal
+      ? await db.prepare(firstTouchSessionSql()).bind(site.id, visitorId).first<{ id: string }>()
+      : await db.prepare(creditedSessionSql()).bind(site.id, visitorId, p.ts + 60_000).first<{ id: string }>();
     sessionId = s?.id ?? p.sessionId ?? null;
   }
   return { visitorId, sessionId, renewal, matchedBy, reason };
