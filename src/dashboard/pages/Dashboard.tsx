@@ -39,13 +39,19 @@ export function Dashboard({ siteId, fallback, header }: { siteId: string; fallba
   const [q, update] = useQueryState(siteId);
   const [reloadKey, setReloadKey] = useState(0);
   const [visitor, setVisitor] = useState<string | null>(null);
-  const [live, setLive] = useState(() => new URLSearchParams(window.location.search).get('live') === '1');
+  const [live, setLive] = useState<null | 'map' | 'list' | 'last'>(() => {
+    const p = new URLSearchParams(window.location.search).get('live');
+    return p === '1' ? 'last' : p === 'map' || p === 'list' ? p : null;
+  });
 
-  // "M" opens the live map, like DataFast.
+  // "M" opens the live map, like DataFast; "L" opens the live list.
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      if (e.key.toLowerCase() === 'm' && !e.metaKey && !e.ctrlKey && !/INPUT|TEXTAREA|SELECT/.test(t.tagName)) setLive(true);
+      if (e.metaKey || e.ctrlKey || /INPUT|TEXTAREA|SELECT/.test(t.tagName)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'm') setLive('map');
+      else if (k === 'l') setLive('list');
     };
     window.addEventListener('keydown', on);
     return () => window.removeEventListener('keydown', on);
@@ -99,7 +105,7 @@ export function Dashboard({ siteId, fallback, header }: { siteId: string; fallba
           update={update}
           overview={overview}
           onRefresh={() => setReloadKey((k) => k + 1)}
-          onLive={() => setLive(true)}
+          onLive={() => setLive('last')}
           loading={loading}
         />
 
@@ -121,7 +127,7 @@ export function Dashboard({ siteId, fallback, header }: { siteId: string; fallba
         )}
 
         <div className="mt-5">
-          <OverviewCard data={overview} onLive={() => setLive(true)} />
+          <OverviewCard data={overview} onLive={(v) => setLive(v ?? 'last')} />
         </div>
 
         {overview?.imported && (
@@ -183,7 +189,7 @@ export function Dashboard({ siteId, fallback, header }: { siteId: string; fallba
       </div>
       {live && (
         <Suspense fallback={<div className="fixed inset-0 z-50 bg-[#070b1a]" />}>
-          <LiveView onClose={() => setLive(false)} />
+          <LiveView initialView={live === 'last' ? undefined : live} onClose={() => setLive(null)} />
         </Suspense>
       )}
       <VisitorModal key={visitor ?? 'none'} visitorId={visitor} onClose={() => setVisitor(null)} />

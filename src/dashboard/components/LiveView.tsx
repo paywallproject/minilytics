@@ -102,7 +102,7 @@ function markerElement(v: LiveVisitor, onClick: () => void): HTMLElement {
   return wrap;
 }
 
-export default function LiveView({ onClose }: { onClose: () => void }) {
+export default function LiveView({ onClose, initialView }: { onClose: () => void; initialView?: 'map' | 'list' }) {
   const { site, money, openVisitor } = useDash();
   const rootRef = useRef<HTMLDivElement>(null);
   const mapEl = useRef<HTMLDivElement>(null);
@@ -116,7 +116,7 @@ export default function LiveView({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState('');
   const [style, setStyle] = useState<StyleName>(() => pref('ml_live_style', 'light'));
   const [projection, setProjection] = useState<Projection>(() => pref('ml_live_projection', 'globe'));
-  const [view, setView] = useState<ViewMode>(() => pref('ml_live_view', 'map'));
+  const [view, setView] = useState<ViewMode>(() => initialView ?? pref('ml_live_view', 'map'));
   const [sound, setSound] = useState(() => pref<string>('ml_live_sound', 'off') === 'on');
   const soundRef = useRef(sound);
   soundRef.current = sound;
