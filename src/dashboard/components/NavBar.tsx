@@ -135,7 +135,7 @@ export function NavBar({ path }: { path: string }) {
           </>
         )}
 
-        {site && (
+        {site && site.role !== 'viewer' && (
           <div className="tabs shrink-0 sm:ml-3">
             <button className={`tab px-2 sm:px-3 ${onSettings ? '' : 'tab-active'}`} onClick={() => onSettings && navigate(`/site/${site.id}`)}>
               Dashboard

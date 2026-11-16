@@ -42,12 +42,15 @@ export async function rememberOwnerDevice(c: Context<AppEnv>, user: User) {
   );
 }
 
-/** Is this tracking request coming from the site owner's own browser? */
+/** Is this tracking request coming from the browser of the site's owner, or of someone added to the site? */
 export async function isOwnerVisit(c: Context<AppEnv>, site: Site): Promise<boolean> {
   const fp = await fingerprint(c);
   if (!fp) return false;
-  const row = await c.env.DB.prepare('SELECT 1 FROM owner_devices WHERE owner = ? AND fp = ? AND seen_at > ?')
-    .bind(ownerKey(site), fp, Date.now() - REMEMBER_MS)
+  const row = await c.env.DB.prepare(
+    `SELECT 1 FROM owner_devices WHERE fp = ? AND seen_at > ?
+       AND (owner = ? OR owner IN (SELECT user_id FROM site_members WHERE site_id = ?))`,
+  )
+    .bind(fp, Date.now() - REMEMBER_MS, ownerKey(site), site.id)
     .first();
   return !!row;
 }

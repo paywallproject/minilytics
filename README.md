@@ -159,6 +159,14 @@ At 5–10k visitors a month you'll use a few percent of this. If you outgrow it,
 - **Let other people sign up** with email + password: `npx wrangler secret put ALLOW_SIGNUP` and enter `true`.
   Each account sees only the sites it adds. You (the `ADMIN_EMAIL` account) keep your own sites. There's no
   email verification or password reset by email, so only turn it on if that's fine for you.
+- **Give people their own login to a site**: site *Settings* → *People*. Enter an email and pick **Viewer**
+  (the dashboard only) or **Manager** (the dashboard and settings, but not deleting the site). A new login gets a
+  temporary password, shown once for you to send them. The site's owner and managers can do this.
+- **Move a site to a client** (self-hosted admin): site *Settings* → *Client*. The client gets their own login and
+  becomes the owner. The site id, tracking script, API key and all data stay the same, and you still see and
+  manage it: as the admin you see every site, with clients' sites labelled by their email.
+- **Teammates** (self-hosted admin): *Account & password* → *Team*. Teammates get their own login and see and
+  manage every site, like the admin.
 - **Make a site public**: site *Settings* → *Public dashboard*. Anyone with the link sees the full dashboard
   without logging in (including customers, visitor profiles and live view). Settings, keys and secrets stay private.
 

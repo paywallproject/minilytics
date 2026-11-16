@@ -111,6 +111,8 @@ export function Settings({ siteId }: { siteId: string }) {
 
   useEffect(() => {
     api<Site>(`/api/sites/${siteId}`).then((s) => {
+      // View-only access (or someone else's public site): there are no settings to show.
+      if (s.readOnly) return navigate(`/site/${siteId}`);
       setSite(s);
       setForm({
         name: s.name,
@@ -216,19 +218,187 @@ window.minilytics('identify', { email: user.email, name: user.name });`}</Code>
         </div>
       )}
 
-      <Section title="Danger zone">
-        <button
-          className="btn border-red-200 text-red-600"
-          onClick={async () => {
-            if (prompt(`Type ${site.domain} to delete this site and all of its data`) !== site.domain) return;
-            await api(`/api/sites/${siteId}`, { method: 'DELETE' });
-            navigate('/');
-          }}
-        >
-          Delete site and all data
-        </button>
-      </Section>
+      <People site={site} />
+
+      {site.role === 'admin' && <ClientOwner site={site} onChange={(owner_id) => setSite({ ...site, owner_id })} />}
+
+      {site.role !== 'manager' && (
+        <Section title="Danger zone">
+          <button
+            className="btn border-red-200 text-red-600"
+            onClick={async () => {
+              if (prompt(`Type ${site.domain} to delete this site and all of its data`) !== site.domain) return;
+              await api(`/api/sites/${siteId}`, { method: 'DELETE' });
+              navigate('/');
+            }}
+          >
+            Delete site and all data
+          </button>
+        </Section>
+      )}
     </div>
+  );
+}
+
+interface Person {
+  id: string;
+  email: string;
+  role: 'viewer' | 'manager';
+}
+
+/** A new login's temporary password, shown once to whoever created it. */
+export function NewLogin({ email, password, onDone }: { email: string; password: string | null; onDone: () => void }) {
+  const origin = window.location.origin;
+  const text = password
+    ? `Your analytics dashboard: ${origin}\nLog in with ${email} and this temporary password: ${password}\nPlease change it after logging in (account menu → Account & password).`
+    : `${email} already had a login, so they can use it: ${origin}`;
+  return (
+    <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm">
+      <p className="font-medium text-emerald-900">{password ? 'Login created. Send them this (the password is only shown now):' : 'Done.'}</p>
+      <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-white p-3 font-mono text-xs text-stone-700">{text}</pre>
+      <div className="mt-2 flex gap-2">
+        {password && <CopyButton text={text} label="Copy message" />}
+        <button className="btn py-1.5 text-sm" onClick={onDone}>
+          Close
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Who else can log in to see this site. */
+function People({ site }: { site: Site }) {
+  const [data, setData] = useState<{ owner: { email: string } | null; members: Person[] } | null>(null);
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState<Person['role']>('viewer');
+  const [error, setError] = useState('');
+  const [created, setCreated] = useState<{ email: string; password: string | null } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => api<typeof data>(`/api/sites/${site.id}/people`).then(setData).catch((e) => setError((e as Error).message));
+  useEffect(() => {
+    load();
+  }, [site.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function add(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
+    setBusy(true);
+    try {
+      const r = await api<{ email: string; password: string | null }>(`/api/sites/${site.id}/people`, { method: 'POST', json: { email, role } });
+      setCreated(r);
+      setEmail('');
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function change(p: Person, next: Person['role'] | null) {
+    setError('');
+    try {
+      if (next) await api(`/api/sites/${site.id}/people/${p.id}`, { method: 'PATCH', json: { role: next } });
+      else if (confirm(`Remove ${p.email}'s access to ${site.domain}?`)) await api(`/api/sites/${site.id}/people/${p.id}`, { method: 'DELETE' });
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  return (
+    <Section title="People" desc="Give others their own login to this site. Viewers see the dashboard; managers can also change settings.">
+      <ul className="divide-y divide-stone-100 text-sm">
+        <li className="flex items-center gap-3 py-2">
+          <span className="min-w-0 flex-1 truncate">{site.owner_id ? data?.owner?.email ?? '…' : 'Admin'}</span>
+          <span className="text-stone-500">Owner</span>
+        </li>
+        {data?.members.map((p) => (
+          <li key={p.id} className="flex items-center gap-3 py-2">
+            <span className="min-w-0 flex-1 truncate">{p.email}</span>
+            <select className="input w-auto py-1" value={p.role} onChange={(e) => change(p, e.target.value as Person['role'])} aria-label={`Role for ${p.email}`}>
+              <option value="viewer">Viewer</option>
+              <option value="manager">Manager</option>
+            </select>
+            <button className="text-stone-400 hover:text-red-600" onClick={() => change(p, null)} aria-label={`Remove ${p.email}`} title="Remove">
+              ✕
+            </button>
+          </li>
+        ))}
+      </ul>
+      <form onSubmit={add} className="mt-4 flex flex-wrap gap-2">
+        <input className="input min-w-0 flex-1" type="email" placeholder="name@example.com" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="Email" />
+        <select className="input w-auto" value={role} onChange={(e) => setRole(e.target.value as Person['role'])} aria-label="Role">
+          <option value="viewer">Viewer</option>
+          <option value="manager">Manager</option>
+        </select>
+        <button className="btn-dark" disabled={busy || !email}>
+          {busy ? 'Adding…' : 'Add'}
+        </button>
+      </form>
+      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+      {created && <NewLogin {...created} onDone={() => setCreated(null)} />}
+    </Section>
+  );
+}
+
+/** Admin only: hand this site to a client (they become the owner), or take it back. Data and tracking stay as they are. */
+function ClientOwner({ site, onChange }: { site: Site; onChange: (ownerId: string | null) => void }) {
+  const [email, setEmail] = useState('');
+  const [error, setError] = useState('');
+  const [created, setCreated] = useState<{ email: string; password: string | null } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function move(e: React.FormEvent) {
+    e.preventDefault();
+    if (!confirm(`Make ${email} the owner of ${site.domain}? You'll still see it.`)) return;
+    setError('');
+    setBusy(true);
+    try {
+      const r = await api<{ owner: { id: string; email: string; password: string | null } }>(`/api/sites/${site.id}/transfer`, { method: 'POST', json: { email } });
+      setCreated(r.owner);
+      setEmail('');
+      onChange(r.owner.id);
+      window.dispatchEvent(new Event(SITES_CHANGED));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function takeBack() {
+    if (!confirm(`Take ${site.domain} back into the admin account? The current owner loses access (people added to the site keep theirs).`)) return;
+    setError('');
+    try {
+      await api(`/api/sites/${site.id}/transfer`, { method: 'DELETE' });
+      onChange(null);
+      window.dispatchEvent(new Event(SITES_CHANGED));
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  return (
+    <Section
+      title="Client"
+      desc="Move this site to a client: they get their own login and become its owner. The tracking script, data and imports stay as they are, and you keep full access."
+    >
+      <form onSubmit={move} className="flex flex-wrap gap-2">
+        <input className="input min-w-0 flex-1" type="email" placeholder="client@example.com" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="Client email" />
+        <button className="btn-dark" disabled={busy || !email}>
+          {busy ? 'Moving…' : site.owner_id ? 'Change owner' : 'Move to client'}
+        </button>
+      </form>
+      {site.owner_id && (
+        <button className="mt-3 text-sm text-stone-500 underline-offset-2 hover:underline" onClick={takeBack}>
+          Take it back into the admin account
+        </button>
+      )}
+      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+      {created && <NewLogin {...created} onDone={() => setCreated(null)} />}
+    </Section>
   );
 }
 

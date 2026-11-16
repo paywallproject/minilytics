@@ -2,12 +2,13 @@ import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { handleEvent } from './collect';
 import { forgetSite, type AppEnv, type Site } from './env';
-import { ADMIN_ID, adminEmail, clearSession, currentUser, emailLogin, googleCallback, googleStart, isHosted, requireUser, setSession, signupOpen, siteAccessSql } from './auth';
+import { ADMIN_ID, adminEmail, clearSession, currentUser, emailLogin, googleCallback, googleStart, isHosted, requireUser, setSession, signupOpen, siteAccessSql, siteRole, type SiteRole } from './auth';
 import { billingWebhook, checkout, planInfo } from './billing';
 import { hashPassword, passwordsMatch, randomId, verifyPassword } from './lib/crypto';
 import { handleDodoWebhook, handleGoalApi, handlePaymentApi, handlePolarWebhook, handleStripeWebhook, learnDodoProducts, rematchPayments } from './payments';
 import { addImportRows, clearImports, deleteImport, finishImport, getImport, startImport } from './imports';
 import { rememberOwnerDevice } from './owner';
+import { addPerson, addStaff, changePerson, cleanEmail, emailProblemFor, findOrCreateAccount, listPeople, listStaff, removePerson, removeStaff, transferSite, untransferSite } from './people';
 import { breakdown, customers, funnel, makeCtx, overview, realtime, sparklines, visitorProfile, visitors, type FunnelStep } from './stats';
 
 const app = new Hono<AppEnv>();
@@ -190,24 +191,32 @@ const PUBLIC_READS = /^\/api\/sites\/[\w-]+(\/(overview|breakdown|realtime|custo
 const loadSite = async (c: Context<AppEnv>, next: Next) => {
   const id = c.req.param('id');
   const user = await currentUser(c);
+  const publicRead = c.req.method === 'GET' && PUBLIC_READS.test(c.req.path);
   if (user) {
     c.set('user', user);
-    // The self-hosted admin can open any site by its link, including client accounts' sites they set up.
-    // Their site list still shows only their own (siteAccessSql).
-    const access = user.admin && !isHosted(c.env) ? { sql: '1 = 1', params: [] } : siteAccessSql(c.env, user);
-    const site = await c.env.DB.prepare(`SELECT s.* FROM sites s WHERE s.id = ? AND ${access.sql}`)
-      .bind(id, ...access.params)
-      .first<Site>();
-    if (site) {
-      c.set('site', site);
-      c.set('readOnly', false);
+    // The self-hosted admin and staff can open every site; others their own and the ones they were added to.
+    const access = siteAccessSql(c.env, user);
+    const site = await c.env.DB.prepare(
+      `SELECT s.*, (SELECT role FROM site_members WHERE site_id = s.id AND user_id = ?) AS member_role FROM sites s WHERE s.id = ? AND ${access.sql}`,
+    )
+      .bind(user.id, id, ...access.params)
+      .first<Site & { member_role: string | null }>();
+    const role = site && siteRole(c.env, user, site);
+    if (site && role) {
+      const { member_role: _, ...plain } = site;
+      // Viewers get what a public dashboard shows: the stats, never the settings or keys.
+      if (role === 'viewer' && !publicRead) return c.json({ error: 'You have view-only access to this site.' }, 403);
+      c.set('site', plain);
+      c.set('role', role);
+      c.set('readOnly', role === 'viewer');
       return next();
     }
   }
-  if (c.req.method === 'GET' && PUBLIC_READS.test(c.req.path)) {
+  if (publicRead) {
     const site = await c.env.DB.prepare('SELECT * FROM sites WHERE id = ? AND public = 1').bind(id).first<Site>();
     if (site) {
       c.set('site', site);
+      c.set('role', null);
       c.set('readOnly', true);
       return next();
     }
@@ -236,8 +245,9 @@ function validTimezone(tz: string) {
 }
 
 const mask = (secret: string | null | undefined) => (secret ? '••••••••' : null);
-const ownerSite = (s: Site) => ({
+const ownerSite = (s: Site, role: SiteRole | null = 'owner') => ({
   ...s,
+  role,
   dodo_webhook_secret: mask(s.dodo_webhook_secret),
   stripe_webhook_secret: mask(s.stripe_webhook_secret),
   polar_webhook_secret: mask(s.polar_webhook_secret),
@@ -252,14 +262,19 @@ const viewerSite = (s: Site) => ({
   currency: s.currency,
   created_at: s.created_at,
   public: s.public,
+  role: null as SiteRole | null,
   readOnly: true,
 });
 
 app.get('/api/sites', async (c) => {
   const now = Date.now();
-  const access = siteAccessSql(c.env, c.get('user'));
+  const user = c.get('user');
+  const access = siteAccessSql(c.env, user);
   const [sites, stats] = await c.env.DB.batch([
-    c.env.DB.prepare(`SELECT s.* FROM sites s WHERE ${access.sql} ORDER BY s.created_at`).bind(...access.params),
+    c.env.DB.prepare(
+      `SELECT s.*, u.email AS owner_email, (SELECT role FROM site_members WHERE site_id = s.id AND user_id = ?) AS member_role
+       FROM sites s LEFT JOIN users u ON u.id = s.owner_id WHERE ${access.sql} ORDER BY s.created_at`,
+    ).bind(user.id, ...access.params),
     c.env.DB.prepare(
       `SELECT site_id, COUNT(DISTINCT visitor_id) AS visitors,
               COUNT(DISTINCT CASE WHEN last_seen_at > ? THEN visitor_id END) AS online
@@ -268,11 +283,17 @@ app.get('/api/sites', async (c) => {
   ]);
   const by = new Map((stats.results as any[]).map((r) => [r.site_id, r]));
   return c.json(
-    (sites.results as unknown as Site[]).map((s) => ({
-      ...ownerSite(s),
-      visitors24h: by.get(s.id)?.visitors ?? 0,
-      online: by.get(s.id)?.online ?? 0,
-    })),
+    (sites.results as unknown as (Site & { owner_email: string | null; member_role: string | null })[]).map(({ owner_email, member_role, ...s }) => {
+      const role = siteRole(c.env, user, { owner_id: s.owner_id, member_role });
+      return {
+        ...(role === 'viewer' ? viewerSite(s) : ownerSite(s, role)),
+        role,
+        // Admins see whose site it is (null = their own); others only see that it's shared with them.
+        owner: role === 'admin' ? owner_email : role === 'owner' ? null : owner_email ?? adminEmail(c.env),
+        visitors24h: by.get(s.id)?.visitors ?? 0,
+        online: by.get(s.id)?.online ?? 0,
+      };
+    }),
   );
 });
 
@@ -289,8 +310,9 @@ app.post('/api/sites', async (c) => {
   if (isHosted(c.env) && !user.paid) return c.json({ error: 'Choose a plan to add websites.' }, 402);
   const b = await c.req.json<Partial<Site>>().catch(() => ({}) as Partial<Site>);
   // Self-hosted admin sites have no owner (the admin owns those); every account owns its own.
-  const site = await createSite(c.env.DB, b, user.admin && !isHosted(c.env) ? null : user.id);
-  return typeof site === 'string' ? c.json({ error: site }, 400) : c.json(ownerSite(site));
+  const admin = user.admin && !isHosted(c.env);
+  const site = await createSite(c.env.DB, b, admin ? null : user.id);
+  return typeof site === 'string' ? c.json({ error: site }, 400) : c.json(ownerSite(site, admin ? 'admin' : 'owner'));
 });
 
 /** Add a site for `ownerId` (null = the self-hosted admin). Returns an error message for bad input. */
@@ -331,28 +353,43 @@ app.post('/api/admin/clients', async (c) => {
   const user = c.get('user');
   if (!user.admin || isHosted(c.env)) return c.json({ error: 'Only the self-hosted admin can add clients.' }, 403);
   const b = await c.req.json<Partial<Site> & { email?: string }>().catch(() => ({}) as Partial<Site> & { email?: string });
-  const email = (b.email ?? '').trim().toLowerCase();
-  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: 'Enter a valid email.' }, 400);
-  if (email === adminEmail(c.env)) return c.json({ error: "That's the admin's email; use the client's." }, 400);
+  const email = cleanEmail(b.email);
+  const problem = emailProblemFor(c.env, email);
+  if (problem) return c.json({ error: problem }, 400);
   if (!b.timezone || !validTimezone(b.timezone)) return c.json({ error: 'Give the timezone the client uses in Plausible.' }, 400);
 
-  let account = await c.env.DB.prepare('SELECT id FROM users WHERE email = ? AND id != ?').bind(email, ADMIN_ID).first<{ id: string }>();
-  let password: string | null = null;
-  if (!account) {
-    password = randomId(12);
-    account = { id: randomId(10) };
-    await c.env.DB.prepare('INSERT INTO users (id, email, created_at, password_hash) VALUES (?, ?, ?, ?)')
-      .bind(account.id, email, Date.now(), await hashPassword(password))
-      .run();
-  }
+  const account = await findOrCreateAccount(c.env.DB, email);
   const domain = cleanDomain(b.domain ?? '');
   const existing = await c.env.DB.prepare('SELECT * FROM sites WHERE owner_id = ? AND domain = ?').bind(account.id, domain).first<Site>();
-  const site = existing ?? (await createSite(c.env.DB, b, account.id));
+  // A site the admin already added for this domain (no owner) is handed over rather than duplicated, keeping its data.
+  const adminSite = existing ? null : await c.env.DB.prepare('SELECT * FROM sites WHERE owner_id IS NULL AND domain = ? ORDER BY created_at LIMIT 1').bind(domain).first<Site>();
+  if (adminSite) {
+    await c.env.DB.prepare('UPDATE sites SET owner_id = ? WHERE id = ?').bind(account.id, adminSite.id).run();
+    forgetSite(adminSite.id);
+  }
+  const site = existing ?? (adminSite ? { ...adminSite, owner_id: account.id } : await createSite(c.env.DB, b, account.id));
   if (typeof site === 'string') return c.json({ error: site }, 400);
-  return c.json({ account: { id: account.id, email, password, created: !!password }, site: { ...ownerSite(site), created: !existing } });
+  return c.json({
+    account: { id: account.id, email, password: account.password, created: !!account.password },
+    site: { ...ownerSite(site, 'admin'), created: !existing && !adminSite, moved: !!adminSite },
+  });
 });
 
-app.get('/api/sites/:id', (c) => c.json(c.get('readOnly') ? viewerSite(c.get('site')) : ownerSite(c.get('site'))));
+// Staff: the admin's teammates, who see and manage every site.
+app.get('/api/admin/staff', listStaff);
+app.post('/api/admin/staff', addStaff);
+app.delete('/api/admin/staff/:uid', removeStaff);
+
+app.get('/api/sites/:id', (c) => c.json(c.get('readOnly') ? { ...viewerSite(c.get('site')), role: c.get('role') } : ownerSite(c.get('site'), c.get('role'))));
+
+// Who can log in to see this site.
+app.get('/api/sites/:id/people', listPeople);
+app.post('/api/sites/:id/people', addPerson);
+app.patch('/api/sites/:id/people/:uid', changePerson);
+app.delete('/api/sites/:id/people/:uid', removePerson);
+// Admin: make a client the owner, or take it back.
+app.post('/api/sites/:id/transfer', transferSite);
+app.delete('/api/sites/:id/transfer', untransferSite);
 
 app.patch('/api/sites/:id', async (c) => {
   const site = c.get('site');
@@ -400,7 +437,7 @@ app.patch('/api/sites/:id', async (c) => {
     )
     .run();
   forgetSite(site.id);
-  return c.json(ownerSite(next));
+  return c.json(ownerSite(next, c.get('role')));
 });
 
 app.post('/api/sites/:id/rotate-key', async (c) => {
@@ -410,11 +447,12 @@ app.post('/api/sites/:id/rotate-key', async (c) => {
 });
 
 app.delete('/api/sites/:id', async (c) => {
+  if (c.get('role') === 'manager') return c.json({ error: 'Only the owner can delete this site.' }, 403);
   const id = c.get('site').id;
   await clearImports(c.env.DB, id).catch(() => {}); // no imports table before migration 0011
   await c.env.DB.batch(
     // Everything stored for the site, so deleting it really removes its visitors' data.
-    ['events', 'sessions', 'visitors', 'payments', 'funnels', 'payment_claims', 'pending_payments', 'dodo_products'].map((t) =>
+    ['events', 'sessions', 'visitors', 'payments', 'funnels', 'payment_claims', 'pending_payments', 'dodo_products', 'site_members'].map((t) =>
       c.env.DB.prepare(`DELETE FROM ${t} WHERE site_id = ?`).bind(id),
     ).concat(c.env.DB.prepare('DELETE FROM sites WHERE id = ?').bind(id)),
   );

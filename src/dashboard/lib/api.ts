@@ -36,8 +36,13 @@ export interface Site {
   created_at: number;
   /** 1 = anyone with the link can view the dashboard. */
   public?: number;
-  /** Viewing someone else's public site: no settings or edits. */
+  /** Viewing someone else's public site, or view-only access: no settings or edits. */
   readOnly?: boolean;
+  /** What you can do here: admin (every site), owner, manager (no delete) or viewer. Null on a public dashboard. */
+  role?: 'admin' | 'owner' | 'manager' | 'viewer' | null;
+  /** Site list: whose site it is, when it isn't yours (a client's email, or who shared it with you). */
+  owner?: string | null;
+  owner_id?: string | null;
   visitors24h?: number;
   online?: number;
 }
@@ -118,6 +123,8 @@ export interface Me {
     name: string | null;
     avatar: string | null;
     admin: boolean;
+    /** Self-hosted teammate of the admin. */
+    staff?: boolean;
     paid: boolean;
     plan_status: string;
     plan_until: number | null;

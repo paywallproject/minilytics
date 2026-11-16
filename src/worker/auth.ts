@@ -23,6 +23,8 @@ export interface User {
   plan_until: number | null;
   /** 'lifetime' | 'monthly' once they've paid. */
   plan: string | null;
+  /** Self-hosted: a teammate of the admin (admin is true for them too). */
+  staff?: boolean;
 }
 
 interface UserRow {
@@ -35,6 +37,7 @@ interface UserRow {
   plan: string | null;
   password_hash: string | null;
   password_changed_at: number | null;
+  staff?: number | null;
 }
 
 /** The self-hosted admin's id. Their users row only exists once they change their password in the dashboard. */
@@ -121,8 +124,9 @@ export async function currentUser(c: Context<AppEnv>): Promise<User | null> {
   const row = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(parts[0].slice(2)).first<UserRow>();
   if (!row || row.id === ADMIN_ID || stale(row)) return null;
   if (!isHosted(c.env)) {
-    // Self-hosted accounts don't pay.
-    return { id: row.id, email: row.email, name: row.name, avatar: row.avatar, admin: false, paid: true, plan_status: 'active', plan_until: null, plan: null };
+    // Self-hosted accounts don't pay. Staff are admins too: they see and manage every site.
+    const staff = !!row.staff;
+    return { id: row.id, email: row.email, name: row.name, avatar: row.avatar, admin: staff, staff, paid: true, plan_status: 'active', plan_until: null, plan: null };
   }
   const admin = isAdminEmail(c.env, row.email);
   return {
@@ -145,14 +149,23 @@ export const requireUser = async (c: Context<AppEnv>, next: Next) => {
   await next();
 };
 
-/** SQL that limits `sites s` to the ones this user may see. */
+/** SQL that limits `sites s` to the ones this user may see: their own, the ones they were added to, and (admins) more. */
 export function siteAccessSql(env: Env, user: User): { sql: string; params: unknown[] } {
-  if (!isHosted(env)) {
-    // Self-hosted: the admin keeps the ownerless sites; signed-up accounts see only their own.
-    return user.admin ? { sql: 's.owner_id IS NULL', params: [] } : { sql: 's.owner_id = ?', params: [user.id] };
-  }
-  if (user.admin) return { sql: '(s.owner_id = ? OR s.owner_id IS NULL)', params: [user.id] };
-  return { sql: 's.owner_id = ?', params: [user.id] };
+  // Self-hosted admin and staff: every site, including the clients' (they set them up and support them).
+  if (!isHosted(env) && user.admin) return { sql: '1 = 1', params: [] };
+  const member = 's.id IN (SELECT site_id FROM site_members WHERE user_id = ?)';
+  if (user.admin) return { sql: `(s.owner_id = ? OR s.owner_id IS NULL OR ${member})`, params: [user.id, user.id] };
+  return { sql: `(s.owner_id = ? OR ${member})`, params: [user.id, user.id] };
+}
+
+export type SiteRole = 'admin' | 'owner' | 'manager' | 'viewer';
+
+/** What this user may do on a site they can see. Viewers get the dashboard only; managers can't delete the site. */
+export function siteRole(env: Env, user: User, site: { owner_id?: string | null; member_role?: string | null }): SiteRole | null {
+  if (user.admin && !isHosted(env)) return 'admin';
+  if (site.owner_id === user.id || (user.admin && !site.owner_id)) return 'owner';
+  if (site.member_role === 'manager' || site.member_role === 'viewer') return site.member_role;
+  return null;
 }
 
 // ---------- Google sign-in (OAuth 2.0 authorization code flow)

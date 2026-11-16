@@ -73,6 +73,13 @@ export function Sites() {
                 <div className="min-w-0 flex-1 truncate font-semibold">{s.name}</div>
                 {!!spark?.online && <Online n={spark.online} />}
               </div>
+              {s.owner && (
+                <div className="mt-1 truncate text-xs text-stone-500" title={s.owner}>
+                  {s.role === 'admin' ? 'Client: ' : 'Shared by '}
+                  {s.owner}
+                  {s.role === 'viewer' && ' · view only'}
+                </div>
+              )}
               <Sparkline series={spark?.series} />
               <Totals visitors={spark?.visitors} revenue={spark ? [{ currency: s.currency, amount: spark.revenue }] : undefined} />
             </button>
