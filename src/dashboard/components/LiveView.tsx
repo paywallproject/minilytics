@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { displayName, persona } from '../../shared/names';
 import { api } from '../lib/api';
 import { useDash } from '../lib/context';
-import { countryName, flag, fmtAgo } from '../lib/format';
+import { countryName, flag, fmtAgo, fmtDuration } from '../lib/format';
 import { playPayment, playVisitor, unlockAudio } from '../lib/sounds';
 import { DeviceIcon, Favicon, Flag, SourceIcon } from './Icons';
 
@@ -56,6 +56,7 @@ const STYLES = {
 } as const;
 type StyleName = keyof typeof STYLES;
 type Projection = 'globe' | 'mercator';
+type ViewMode = 'map' | 'list';
 
 const POLL_MS = 5000;
 
@@ -115,6 +116,7 @@ export default function LiveView({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState('');
   const [style, setStyle] = useState<StyleName>(() => pref('ml_live_style', 'light'));
   const [projection, setProjection] = useState<Projection>(() => pref('ml_live_projection', 'globe'));
+  const [view, setView] = useState<ViewMode>(() => pref('ml_live_view', 'map'));
   const [sound, setSound] = useState(() => pref<string>('ml_live_sound', 'off') === 'on');
   const soundRef = useRef(sound);
   soundRef.current = sound;
@@ -151,13 +153,16 @@ export default function LiveView({ onClose }: { onClose: () => void }) {
 
   const projectionRef = useRef(projection);
   projectionRef.current = projection;
+  const styleRef = useRef(style);
+  styleRef.current = style;
 
   // ---- map setup
   useEffect(() => {
-    if (!mapEl.current) return;
+    savePref('ml_live_view', view);
+    if (view !== 'map' || !mapEl.current) return;
     const map = new maplibregl.Map({
       container: mapEl.current,
-      style: STYLES[style],
+      style: STYLES[styleRef.current],
       center: [10, 25],
       zoom: 1.4,
       attributionControl: { compact: true },
@@ -192,9 +197,8 @@ export default function LiveView({ onClose }: { onClose: () => void }) {
       map.remove();
       mapRef.current = null;
     };
-    // The map is created once; style and projection changes are applied below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // The map is created when map view opens; style and projection changes are applied below.
+  }, [view]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -240,7 +244,7 @@ export default function LiveView({ onClose }: { onClose: () => void }) {
         markers.current.delete(id);
       }
     }
-  }, [data, openVisitor]);
+  }, [data, openVisitor, view]);
 
   useEffect(() => {
     for (const [id, m] of markers.current) {
@@ -252,6 +256,10 @@ export default function LiveView({ onClose }: { onClose: () => void }) {
   }, [highlight, data]);
 
   const focus = (item: { visitor_id: string | null; lat: number | null; lon: number | null }) => {
+    if (view === 'list') {
+      if (item.visitor_id) openVisitor(item.visitor_id);
+      return;
+    }
     interacting.current = Date.now();
     if (item.lat !== null && item.lon !== null) {
       mapRef.current?.flyTo({ center: [item.lon, item.lat], zoom: Math.max(mapRef.current.getZoom(), 3), duration: 1500 });
@@ -282,21 +290,21 @@ export default function LiveView({ onClose }: { onClose: () => void }) {
   const muted = dark ? 'text-stone-400' : 'text-stone-500';
   const btn = `rounded-lg p-1.5 transition ${dark ? 'hover:bg-white/10' : 'hover:bg-stone-100'}`;
 
-  return (
-    <div ref={rootRef} className="fixed inset-0 z-50 bg-[#070b1a]">
-      {/* MapLibre's CSS makes its container position:relative, so it gets its own full-size wrapper. */}
-      <div className="absolute inset-0">
-        <div ref={mapEl} className="h-full w-full" />
-      </div>
-
-      {/* Summary card */}
-      <div className={`absolute left-3 top-3 w-[min(360px,calc(100%-24px))] rounded-2xl border p-4 shadow-xl backdrop-blur ${panel}`}>
+  const header = (
+    <>
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 font-semibold">
             <Favicon domain={site.domain} size={18} /> {site.name}
             <span className={`text-xs font-medium uppercase tracking-wider ${muted}`}>· Real-time</span>
           </div>
           <div className="flex items-center">
+            <button
+              className={`${btn} text-xs font-semibold`}
+              title={view === 'map' ? 'Show as a list' : 'Show on the map'}
+              onClick={() => setView((v) => (v === 'map' ? 'list' : 'map'))}
+            >
+              {view === 'map' ? 'List' : 'Map'}
+            </button>
             <button
               className={btn}
               title={sound ? 'Sound on' : 'Sound off'}
@@ -307,10 +315,12 @@ export default function LiveView({ onClose }: { onClose: () => void }) {
             >
               {sound ? '🔔' : '🔕'}
             </button>
-            <button className={`${btn} text-xs font-semibold`} title="3D globe / 2D map" onClick={() => setProjection((p) => (p === 'globe' ? 'mercator' : 'globe'))}>
-              {projection === 'globe' ? '2D' : '3D'}
-            </button>
-            <button className={btn} title="Light / dark map" onClick={() => setStyle((s) => (s === 'light' ? 'dark' : 'light'))}>
+            {view === 'map' && (
+              <button className={`${btn} text-xs font-semibold`} title="3D globe / 2D map" onClick={() => setProjection((p) => (p === 'globe' ? 'mercator' : 'globe'))}>
+                {projection === 'globe' ? '2D' : '3D'}
+              </button>
+            )}
+            <button className={btn} title={view === 'map' ? 'Light / dark map' : 'Light / dark'} onClick={() => setStyle((s) => (s === 'light' ? 'dark' : 'light'))}>
               {dark ? '☀️' : '🌙'}
             </button>
             <button
@@ -336,16 +346,16 @@ export default function LiveView({ onClose }: { onClose: () => void }) {
             <Chips label="Devices" muted={muted} items={summary.devices.map(([k, n]) => [<DeviceIcon key="i" name={k} size={14} />, k, n])} />
           </div>
         )}
-        {summary.unplaced > 0 && (
+        {view === 'map' && summary.unplaced > 0 && (
           <p className={`mt-2 text-[11px] ${muted}`}>
             {summary.unplaced} visitor{summary.unplaced > 1 ? 's' : ''} without a location (arrived before the globe was added) not shown on the map.
           </p>
         )}
         {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
-      </div>
-
-      {/* Live event feed */}
-      <div className={`absolute bottom-3 left-3 max-h-[45vh] w-[min(380px,calc(100%-24px))] overflow-y-auto rounded-2xl border p-2 shadow-xl backdrop-blur ${panel}`}>
+    </>
+  );
+  const feedList = (
+    <>
         {!data && <p className={`p-3 text-sm ${muted}`}>Connecting…</p>}
         {data && data.feed.length === 0 && <p className={`p-3 text-sm ${muted}`}>No activity in the last 30 minutes.</p>}
         {data?.feed.map((f) => {
@@ -388,6 +398,108 @@ export default function LiveView({ onClose }: { onClose: () => void }) {
             </button>
           );
         })}
+    </>
+  );
+
+  if (view === 'list') {
+    const row = dark ? 'border-white/10 hover:bg-white/5' : 'border-stone-100 hover:bg-stone-50';
+    return (
+      <div ref={rootRef} className={`fixed inset-0 z-50 overflow-y-auto ${dark ? 'bg-[#0c0f1a] text-stone-100' : 'bg-stone-50 text-ink'}`}>
+        <div className="mx-auto max-w-[1200px] space-y-4 p-3 sm:p-6">
+          <div className={`rounded-2xl border p-4 shadow-sm ${panel}`}>{header}</div>
+          <div className="grid gap-4 lg:grid-cols-[1fr_380px]">
+            <div className={`min-w-0 rounded-2xl border shadow-sm ${panel}`}>
+              <h3 className="px-4 pb-2 pt-4 text-sm font-semibold">Who's here now</h3>
+              {!data && <p className={`px-4 pb-4 text-sm ${muted}`}>Connecting…</p>}
+              {data && visitors.length === 0 && <p className={`px-4 pb-4 text-sm ${muted}`}>Nobody on the site right now.</p>}
+              {visitors.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-[13px]">
+                    <thead className={`text-[11px] uppercase tracking-wider ${muted}`}>
+                      <tr>
+                        <th className="px-4 py-2 font-medium">Visitor</th>
+                        <th className="px-2 py-2 font-medium">Current page</th>
+                        <th className="px-2 py-2 font-medium">Came from</th>
+                        <th className="px-2 py-2 text-right font-medium">Pages</th>
+                        <th className="px-4 py-2 text-right font-medium">On site</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...visitors]
+                        .sort((a, b) => b.last_seen_at - a.last_seen_at)
+                        .map((v) => {
+                          const p = persona(v.visitor_id);
+                          const place = [v.city, v.country && countryName(v.country)].filter(Boolean).join(', ');
+                          return (
+                            <tr key={v.visitor_id} className={`cursor-pointer border-t ${row}`} onClick={() => openVisitor(v.visitor_id)}>
+                              <td className="px-4 py-2">
+                                <div className="flex items-center gap-2.5">
+                                  <span
+                                    className="h-8 w-8 shrink-0 overflow-hidden rounded-full"
+                                    style={{ background: p.color, boxShadow: v.spent > 0 ? '0 0 0 2px #e07b5f' : undefined }}
+                                  >
+                                    <img src={p.avatar} alt="" className="h-full w-full" />
+                                  </span>
+                                  <span className="min-w-0">
+                                    <span className="block truncate font-semibold">{displayName(v.visitor_id, v.name, v.email)}</span>
+                                    <span className={`flex items-center gap-1 text-[11px] ${muted}`}>
+                                      {v.country && <Flag cc={v.country} size={12} />}
+                                      <span className="truncate">{place || 'Unknown location'}</span>
+                                      {v.device && (
+                                        <>
+                                          {' · '}
+                                          <DeviceIcon name={v.device} size={12} />
+                                        </>
+                                      )}
+                                    </span>
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="max-w-[260px] px-2 py-2">
+                                <code className="block truncate font-medium">{v.page ?? '—'}</code>
+                              </td>
+                              <td className="px-2 py-2">
+                                <span className="flex items-center gap-1.5">
+                                  <SourceIcon source={v.source} size={14} />
+                                  <span className="max-w-[140px] truncate">{v.source}</span>
+                                </span>
+                              </td>
+                              <td className="px-2 py-2 text-right tabular-nums">{v.pageviews}</td>
+                              <td className={`px-4 py-2 text-right tabular-nums ${muted}`}>
+                                {fmtDuration(Math.max(0, Date.now() - v.started_at))}
+                                {v.spent > 0 && <span className="block font-semibold text-emerald-500">{money(v.spent)}</span>}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <div className={`min-w-0 rounded-2xl border p-2 shadow-sm lg:max-h-[calc(100vh-220px)] lg:overflow-y-auto ${panel}`}>
+              <h3 className="px-2 pb-1 pt-2 text-sm font-semibold">Activity</h3>
+              {feedList}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={rootRef} className="fixed inset-0 z-50 bg-[#070b1a]">
+      {/* MapLibre's CSS makes its container position:relative, so it gets its own full-size wrapper. */}
+      <div className="absolute inset-0">
+        <div ref={mapEl} className="h-full w-full" />
+      </div>
+
+      {/* Summary card */}
+      <div className={`absolute left-3 top-3 w-[min(360px,calc(100%-24px))] rounded-2xl border p-4 shadow-xl backdrop-blur ${panel}`}>{header}</div>
+
+      {/* Live event feed */}
+      <div className={`absolute bottom-3 left-3 max-h-[45vh] w-[min(380px,calc(100%-24px))] overflow-y-auto rounded-2xl border p-2 shadow-xl backdrop-blur ${panel}`}>
+        {feedList}
       </div>
     </div>
   );
