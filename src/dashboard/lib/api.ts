@@ -117,6 +117,8 @@ export interface Me {
   emailLogin?: boolean;
   /** Self-hosted sign-up is open (ALLOW_SIGNUP). */
   signup?: boolean;
+  /** False for logins that only have view access to sites shared with them. */
+  canAddSites?: boolean;
   user: {
     id: string;
     email: string | null;

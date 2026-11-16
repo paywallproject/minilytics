@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { navigate } from '../App';
+import { navigate, useMe } from '../App';
 import { Favicon } from '../components/Icons';
 import { Modal } from '../components/Modal';
 import { CurrencySelect, TimezoneSelect } from '../components/SiteFields';
@@ -19,6 +19,8 @@ const PERIODS = [
 const AUTO_REFRESH_MS = 60_000;
 
 export function Sites() {
+  const { me } = useMe();
+  const canAdd = me.canAddSites !== false;
   const [adding, setAdding] = useState(false);
   const [period, setPeriod] = usePref('ml_sites_period', '30d');
   const [reloadKey, setReloadKey] = useState(0);
@@ -27,8 +29,8 @@ export function Sites() {
   const loading = loadingSites || loadingSparks;
 
   useEffect(() => {
-    if (sites && !sites.length) setAdding(true);
-  }, [sites]);
+    if (sites && !sites.length && canAdd) setAdding(true);
+  }, [sites, canAdd]);
 
   // Keep the numbers fresh while the page sits open.
   useEffect(() => {
@@ -41,11 +43,13 @@ export function Sites() {
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:py-12">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold">Your websites</h1>
+        <h1 className="text-2xl font-semibold">{canAdd ? 'Your websites' : 'Websites shared with you'}</h1>
         <div className="flex items-center gap-2">
-          <button className="btn-dark" onClick={() => setAdding(true)}>
-            + Add website
-          </button>
+          {canAdd && (
+            <button className="btn-dark" onClick={() => setAdding(true)}>
+              + Add website
+            </button>
+          )}
           <div className="tabs">
             {PERIODS.map((p) => (
               <button key={p.value} className={`tab ${period === p.value ? 'tab-active' : ''}`} onClick={() => setPeriod(p.value)}>
@@ -86,10 +90,12 @@ export function Sites() {
           );
         })}
         {sites && !sites.length && (
-          <div className="card col-span-full p-10 text-center text-stone-500">No websites yet. Add your first one to get a tracking snippet.</div>
+          <div className="card col-span-full p-10 text-center text-stone-500">
+            {canAdd ? 'No websites yet. Add your first one to get a tracking snippet.' : 'No websites are shared with you right now.'}
+          </div>
         )}
       </div>
-      <AddSite open={adding} onClose={() => setAdding(false)} />
+      {canAdd && <AddSite open={adding} onClose={() => setAdding(false)} />}
     </div>
   );
 }

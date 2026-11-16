@@ -2,7 +2,7 @@ import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { handleEvent } from './collect';
 import { forgetSite, type AppEnv, type Site } from './env';
-import { ADMIN_ID, adminEmail, clearSession, currentUser, emailLogin, googleCallback, googleStart, isHosted, requireUser, setSession, signupOpen, siteAccessSql, siteRole, type SiteRole } from './auth';
+import { ADMIN_ID, adminEmail, clearSession, currentUser, emailLogin, googleCallback, googleStart, isHosted, requireUser, setSession, signupOpen, siteAccessSql, siteRole, type SiteRole, type User } from './auth';
 import { billingWebhook, checkout, planInfo } from './billing';
 import { hashPassword, passwordsMatch, randomId, verifyPassword } from './lib/crypto';
 import { handleDodoWebhook, handleGoalApi, handlePaymentApi, handlePolarWebhook, handleStripeWebhook, learnDodoProducts, rematchPayments } from './payments';
@@ -169,10 +169,25 @@ app.post('/api/auth/logout', (c) => {
   return c.json({ ok: true });
 });
 
+/**
+ * May this account add websites? Self-hosted: the admin and staff, and anyone who owns or manages a site.
+ * People who only have view access to someone else's site can't (unless sign-up is open, where anyone may).
+ */
+async function canAddSites(c: Context<AppEnv>, user: User) {
+  if (isHosted(c.env) || user.admin || signupOpen(c.env)) return true;
+  const row = await c.env.DB.prepare(
+    `SELECT 1 FROM sites WHERE owner_id = ? UNION ALL SELECT 1 FROM site_members WHERE user_id = ? AND role = 'manager' LIMIT 1`,
+  )
+    .bind(user.id, user.id)
+    .first();
+  return !!row;
+}
+
 app.get('/api/auth/me', async (c) => {
   const user = await currentUser(c);
   if (user) c.executionCtx.waitUntil(rememberOwnerDevice(c, user).catch(() => {}));
-  return c.json({ loggedIn: !!user, hosted: isHosted(c.env), emailLogin: emailLogin(c.env), signup: signupOpen(c.env), user });
+  const canAdd = user ? await canAddSites(c, user) : false;
+  return c.json({ loggedIn: !!user, hosted: isHosted(c.env), emailLogin: emailLogin(c.env), signup: signupOpen(c.env), canAddSites: canAdd, user });
 });
 
 // ---------- billing (hosted mode)
@@ -308,6 +323,7 @@ app.get('/api/sites-overview', async (c) => {
 app.post('/api/sites', async (c) => {
   const user = c.get('user');
   if (isHosted(c.env) && !user.paid) return c.json({ error: 'Choose a plan to add websites.' }, 402);
+  if (!(await canAddSites(c, user))) return c.json({ error: 'Your login can view sites shared with you, but not add websites.' }, 403);
   const b = await c.req.json<Partial<Site>>().catch(() => ({}) as Partial<Site>);
   // Self-hosted admin sites have no owner (the admin owns those); every account owns its own.
   const admin = user.admin && !isHosted(c.env);
