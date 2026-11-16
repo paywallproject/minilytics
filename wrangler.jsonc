@@ -11,6 +11,8 @@
     // Static files skip the Worker. Anything else (client routes, unknown paths) runs it so missing pages return a real 404.
     "run_worker_first": ["/api/*"]
   },
+  // Hourly: sends the weekly / monthly email reports that are due (each at 8am in its site's timezone).
+  "triggers": { "crons": ["0 * * * *"] },
   "d1_databases": [
     {
       "binding": "DB",

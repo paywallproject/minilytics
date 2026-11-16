@@ -170,6 +170,27 @@ At 5–10k visitors a month you'll use a few percent of this. If you outgrow it,
 - **Make a site public**: site *Settings* → *Public dashboard*. Anyone with the link sees the full dashboard
   without logging in (including customers, visitor profiles and live view). Settings, keys and secrets stay private.
 
+## Email reports
+
+Each person can get a weekly (Monday 8am, site time) or monthly (the 1st) email for each site they can see:
+a short written summary of how it went, visitors, pageviews and revenue against the period before, visitors per
+day, and the top sources, pages, countries and goals. Turn it on in *Account & password* → *Email reports*. The
+admin can also set anyone's in a site's *Settings* → *People*, and new clients start on weekly. *Settings* →
+*Email reports* has a preview and a test send. Every email has an unsubscribe link.
+
+It needs, as Worker variables or secrets:
+
+| Name | What |
+|---|---|
+| `PUBLIC_URL` | The dashboard's address, for links in the emails (e.g. `https://analytics.example.com`) |
+| `SES_ACCESS_KEY_ID`, `SES_SECRET_ACCESS_KEY` | An Amazon SES IAM key allowed `ses:SendEmail` |
+| `SES_REGION` | The SES region your sending domain is verified in (e.g. `us-east-1`) |
+| `REPORT_FROM` | The sender, e.g. `Analytics <reports@example.com>`, on a domain verified in SES |
+| `ANTHROPIC_API_KEY` | Optional. Claude writes the summary at the top; without it the email has just the numbers |
+
+Without the SES values nothing is sent. The Worker runs hourly (Cron Trigger in `wrangler.jsonc`) and sends
+each report once.
+
 ## Import from Plausible
 
 Moving from Plausible (cloud or self-hosted Community Edition)? Bring your history with you:

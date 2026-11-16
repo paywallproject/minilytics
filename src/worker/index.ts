@@ -8,7 +8,9 @@ import { hashPassword, passwordsMatch, randomId, verifyPassword } from './lib/cr
 import { handleDodoWebhook, handleGoalApi, handlePaymentApi, handlePolarWebhook, handleStripeWebhook, learnDodoProducts, rematchPayments } from './payments';
 import { addImportRows, clearImports, deleteImport, finishImport, getImport, startImport } from './imports';
 import { rememberOwnerDevice } from './owner';
-import { addPerson, addStaff, changePerson, cleanEmail, emailProblemFor, findOrCreateAccount, listPeople, listStaff, removePerson, removeStaff, transferSite, untransferSite } from './people';
+import { addPerson, addStaff, changePerson, cleanEmail, emailProblemFor, findOrCreateAccount, listPeople, listStaff, removePerson, removeStaff, setPersonReport, transferSite, untransferSite } from './people';
+import { defaultSubscription, emailConfigured, gatherReport, isFrequency, linksFor, renderEmail, reportPeriod, runScheduledReports, sendEmail, setSubscription, writeSummary } from './reports';
+import { verifyToken } from './lib/crypto';
 import { breakdown, customers, funnel, makeCtx, overview, realtime, sparklines, visitorProfile, visitors, type FunnelStep } from './stats';
 
 const app = new Hono<AppEnv>();
@@ -195,6 +197,59 @@ app.get('/api/auth/me', async (c) => {
 app.get('/api/public/plan', async (c) => c.json(await planInfo(c.env)));
 app.post('/api/billing/webhook', billingWebhook);
 app.get('/api/billing/checkout', requireUser, checkout);
+
+// ---------- your email reports (any login; for every site you can see)
+
+app.get('/api/reports', requireUser, async (c) => {
+  const user = c.get('user');
+  const access = siteAccessSql(c.env, user);
+  const r = await c.env.DB.prepare(
+    `SELECT s.id, s.name, s.domain, r.frequency FROM sites s
+     LEFT JOIN report_subscriptions r ON r.site_id = s.id AND r.user_id = ?
+     WHERE ${access.sql} ORDER BY s.created_at`,
+  )
+    .bind(user.id, ...access.params)
+    .all();
+  return c.json({ sites: r.results, email: user.email, sending: emailConfigured(c.env) });
+});
+
+app.put('/api/reports/:siteId', requireUser, async (c) => {
+  const user = c.get('user');
+  const b = await c.req.json<{ frequency?: string }>().catch(() => ({}) as { frequency?: string });
+  if (b.frequency !== 'off' && !isFrequency(b.frequency)) return c.json({ error: 'frequency must be off, weekly or monthly' }, 400);
+  const access = siteAccessSql(c.env, user);
+  const site = await c.env.DB.prepare(`SELECT s.* FROM sites s WHERE s.id = ? AND ${access.sql}`).bind(c.req.param('siteId'), ...access.params).first<Site>();
+  if (!site) return c.json({ error: 'site not found' }, 404);
+  if (!user.email && b.frequency !== 'off') return c.json({ error: 'Your login has no email address.' }, 400);
+  await setSubscription(c.env.DB, site, user.id, b.frequency);
+  return c.json({ ok: true });
+});
+
+/** The unsubscribe link in each report (and the one-click List-Unsubscribe POST from mail apps). No login needed. */
+async function unsubscribe(c: Context<AppEnv>, confirmed: boolean) {
+  const value = await verifyToken(c.env.SESSION_SECRET, c.req.query('t'));
+  const [, siteId, userId] = value?.split(':') ?? [];
+  const page = (body: string) =>
+    c.html(
+      `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Email reports</title>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f5f4;color:#1c1917;margin:0;padding:48px 16px">
+<div style="max-width:440px;margin:0 auto;background:#fff;border:1px solid #e7e5e4;border-radius:16px;padding:28px">${body}</div></body>`,
+    );
+  if (!value?.startsWith('unsub:') || !siteId || !userId) return page('<h1 style="font-size:20px">This link isn’t valid</h1><p>Change your email reports from your account page instead.</p>');
+  const site = await c.env.DB.prepare('SELECT name, domain FROM sites WHERE id = ?').bind(siteId).first<{ name: string; domain: string }>();
+  const name = (site?.name ?? 'this site').replace(/[&<>"']/g, '');
+  if (!confirmed) {
+    // A button rather than unsubscribing on GET, so link scanners in mail systems don't unsubscribe people.
+    return page(
+      `<h1 style="font-size:20px;margin:0 0 8px">Stop email reports for ${name}?</h1>
+<form method="post"><button style="margin-top:12px;background:#1c1917;color:#fff;border:0;border-radius:10px;padding:12px 20px;font-size:15px;font-weight:600;cursor:pointer">Unsubscribe</button></form>`,
+    );
+  }
+  await c.env.DB.prepare('DELETE FROM report_subscriptions WHERE site_id = ? AND user_id = ?').bind(siteId, userId).run();
+  return page(`<h1 style="font-size:20px;margin:0 0 8px">You’re unsubscribed</h1><p style="color:#57534e">You won’t get email reports for ${name} any more. You can turn them back on from your account page.</p>`);
+}
+app.get('/api/reports/unsubscribe', (c) => unsubscribe(c, false));
+app.post('/api/reports/unsubscribe', (c) => unsubscribe(c, true));
 
 // ---------- dashboard API (login required, except viewing a public site)
 
@@ -385,6 +440,7 @@ app.post('/api/admin/clients', async (c) => {
   }
   const site = existing ?? (adminSite ? { ...adminSite, owner_id: account.id } : await createSite(c.env.DB, b, account.id));
   if (typeof site === 'string') return c.json({ error: site }, 400);
+  await defaultSubscription(c.env.DB, site, account.id); // new clients get the weekly email report
   return c.json({
     account: { id: account.id, email, password: account.password, created: !!account.password },
     site: { ...ownerSite(site, 'admin'), created: !existing && !adminSite, moved: !!adminSite },
@@ -406,6 +462,48 @@ app.delete('/api/sites/:id/people/:uid', removePerson);
 // Admin: make a client the owner, or take it back.
 app.post('/api/sites/:id/transfer', transferSite);
 app.delete('/api/sites/:id/transfer', untransferSite);
+app.put('/api/sites/:id/people/:uid/report', setPersonReport);
+
+// ---------- email reports
+
+const baseUrl = (c: Context<AppEnv>) => (c.env.PUBLIC_URL || new URL(c.req.url).origin).replace(/\/+$/, '');
+const canSeeReport = (c: Context<AppEnv>) => ['admin', 'owner', 'manager'].includes(c.get('role') ?? '');
+
+/** This site's report as it would be emailed now (the last full week or month), to look at in the browser. */
+app.get('/api/sites/:id/report/preview', async (c) => {
+  if (!canSeeReport(c)) return c.json({ error: 'Only the owner and managers can preview reports.' }, 403);
+  const site = c.get('site');
+  const frequency = isFrequency(c.req.query('frequency')) ? (c.req.query('frequency') as 'weekly' | 'monthly') : 'weekly';
+  const period = reportPeriod(frequency, site.timezone);
+  const data = await gatherReport(c.env.DB, site, period);
+  const summary = await writeSummary(c.env, data);
+  const mail = renderEmail(data, summary, await linksFor(c.env, baseUrl(c), period, site.id, null));
+  c.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'self'");
+  return c.html(mail.html);
+});
+
+/** Email this site's report to yourself now. */
+app.post('/api/sites/:id/report/test', async (c) => {
+  if (!canSeeReport(c)) return c.json({ error: 'Only the owner and managers can send a test report.' }, 403);
+  if (!emailConfigured(c.env)) return c.json({ error: 'Email sending isn’t set up yet (Amazon SES settings are missing).' }, 400);
+  const user = c.get('user');
+  const to = user.email;
+  if (!to) return c.json({ error: 'Your login has no email address.' }, 400);
+  const site = c.get('site');
+  const b = await c.req.json<{ frequency?: string }>().catch(() => ({}) as { frequency?: string });
+  const frequency = isFrequency(b.frequency) ? b.frequency : 'weekly';
+  const period = reportPeriod(frequency, site.timezone);
+  const data = await gatherReport(c.env.DB, site, period);
+  const summary = await writeSummary(c.env, data);
+  const links = await linksFor(c.env, baseUrl(c), period, site.id, null);
+  try {
+    await sendEmail(c.env, to, renderEmail(data, summary, links), null);
+  } catch (e) {
+    console.error('test report failed', e);
+    return c.json({ error: `Sending failed: ${(e as Error).message}` }, 502);
+  }
+  return c.json({ ok: true, to, summary: !!summary });
+});
 
 app.patch('/api/sites/:id', async (c) => {
   const site = c.get('site');
@@ -468,7 +566,7 @@ app.delete('/api/sites/:id', async (c) => {
   await clearImports(c.env.DB, id).catch(() => {}); // no imports table before migration 0011
   await c.env.DB.batch(
     // Everything stored for the site, so deleting it really removes its visitors' data.
-    ['events', 'sessions', 'visitors', 'payments', 'funnels', 'payment_claims', 'pending_payments', 'dodo_products', 'site_members'].map((t) =>
+    ['events', 'sessions', 'visitors', 'payments', 'funnels', 'payment_claims', 'pending_payments', 'dodo_products', 'site_members', 'report_subscriptions'].map((t) =>
       c.env.DB.prepare(`DELETE FROM ${t} WHERE site_id = ?`).bind(id),
     ).concat(c.env.DB.prepare('DELETE FROM sites WHERE id = ?').bind(id)),
   );
@@ -567,4 +665,10 @@ app.all('*', async (c) => {
   return new Response(index.body, { status, headers });
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  // Hourly Cron Trigger (wrangler.jsonc): sends the email reports that are due.
+  async scheduled(_controller: ScheduledController, env: AppEnv['Bindings'], ctx: ExecutionContext) {
+    ctx.waitUntil(runScheduledReports(env));
+  },
+} satisfies ExportedHandler<AppEnv['Bindings']>;

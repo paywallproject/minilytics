@@ -3,3 +3,10 @@ ADMIN_EMAIL=you@example.com # the email you'll log in with
 ADMIN_PASSWORD=change-me # the password you'll log in with
 # ALLOW_SIGNUP=true # optional: let anyone create an account (each sees only its own sites)
 SESSION_SECRET=any-long-random-string # signs the login cookie; openssl rand -hex 32
+# Optional: email reports (see README → Email reports)
+# PUBLIC_URL=http://localhost:5173
+# SES_ACCESS_KEY_ID=
+# SES_SECRET_ACCESS_KEY=
+# SES_REGION=us-east-1
+# REPORT_FROM=Analytics <reports@example.com>
+# ANTHROPIC_API_KEY=

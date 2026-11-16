@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import { ADMIN_ID, adminEmail, isHosted } from './auth';
 import { forgetSite, type AppEnv, type Env } from './env';
 import { hashPassword, randomId } from './lib/crypto';
+import { defaultSubscription, isFrequency, setSubscription } from './reports';
 
 const ROLES = ['viewer', 'manager'] as const;
 type MemberRole = (typeof ROLES)[number];
@@ -45,12 +46,13 @@ const canManagePeople = (c: Context<AppEnv>) => ['admin', 'owner', 'manager'].in
 export async function listPeople(c: Context<AppEnv>) {
   if (!canManagePeople(c)) return c.json({ error: 'Only the owner and managers can see who has access.' }, 403);
   const site = c.get('site');
+  const report = (col: string) => `(SELECT frequency FROM report_subscriptions WHERE site_id = ? AND user_id = ${col}) AS report`;
   const [owner, members] = await c.env.DB.batch([
-    c.env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(site.owner_id ?? ''),
+    c.env.DB.prepare(`SELECT id, email, ${report('users.id')} FROM users WHERE id = ?`).bind(site.id, site.owner_id ?? ''),
     c.env.DB.prepare(
-      `SELECT m.user_id AS id, u.email, m.role, m.created_at FROM site_members m JOIN users u ON u.id = m.user_id
+      `SELECT m.user_id AS id, u.email, m.role, m.created_at, ${report('m.user_id')} FROM site_members m JOIN users u ON u.id = m.user_id
        WHERE m.site_id = ? ORDER BY m.created_at`,
-    ).bind(site.id),
+    ).bind(site.id, site.id),
   ]);
   return c.json({ owner: owner.results[0] ?? null, members: members.results });
 }
@@ -86,7 +88,24 @@ export async function changePerson(c: Context<AppEnv>) {
 /** Take away someone's access. Their login stays (they may be on other sites); it just stops showing this one. */
 export async function removePerson(c: Context<AppEnv>) {
   if (!canManagePeople(c)) return c.json({ error: 'Only the owner and managers can remove people.' }, 403);
-  await c.env.DB.prepare('DELETE FROM site_members WHERE site_id = ? AND user_id = ?').bind(c.get('site').id, c.req.param('uid')).run();
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM site_members WHERE site_id = ? AND user_id = ?').bind(c.get('site').id, c.req.param('uid')),
+    c.env.DB.prepare('DELETE FROM report_subscriptions WHERE site_id = ? AND user_id = ?').bind(c.get('site').id, c.req.param('uid')),
+  ]);
+  return c.json({ ok: true });
+}
+
+/** Admin only: turn someone's email report for this site on or off (e.g. switch a client on). */
+export async function setPersonReport(c: Context<AppEnv>) {
+  if (c.get('role') !== 'admin') return c.json({ error: 'Only the admin can change other people’s reports.' }, 403);
+  const site = c.get('site');
+  const uid = c.req.param('uid')!;
+  const b = await c.req.json<{ frequency?: string }>().catch(() => ({}) as { frequency?: string });
+  if (b.frequency !== 'off' && !isFrequency(b.frequency)) return c.json({ error: 'frequency must be off, weekly or monthly' }, 400);
+  const onSite =
+    site.owner_id === uid || !!(await c.env.DB.prepare('SELECT 1 FROM site_members WHERE site_id = ? AND user_id = ?').bind(site.id, uid).first());
+  if (!onSite) return c.json({ error: 'Not on this site' }, 404);
+  await setSubscription(c.env.DB, site, uid, b.frequency);
   return c.json({ ok: true });
 }
 
@@ -113,6 +132,7 @@ export async function transferSite(c: Context<AppEnv>) {
   if (site.owner_id && site.owner_id !== account.id && isMemberRole(b.keepPreviousAs)) stmts.push(keepAsMember(c, site.owner_id, b.keepPreviousAs));
   await c.env.DB.batch(stmts);
   forgetSite(site.id);
+  await defaultSubscription(c.env.DB, site, account.id);
   return c.json({ owner: { id: account.id, email, password: account.password } });
 }
 
@@ -133,6 +153,7 @@ export async function untransferSite(c: Context<AppEnv>) {
   const b = await c.req.json<{ keepAs?: string }>().catch(() => ({}) as { keepAs?: string });
   const stmts = [c.env.DB.prepare('UPDATE sites SET owner_id = NULL WHERE id = ?').bind(site.id)];
   if (site.owner_id && isMemberRole(b.keepAs)) stmts.push(keepAsMember(c, site.owner_id, b.keepAs));
+  else if (site.owner_id) stmts.push(c.env.DB.prepare('DELETE FROM report_subscriptions WHERE site_id = ? AND user_id = ?').bind(site.id, site.owner_id));
   await c.env.DB.batch(stmts);
   forgetSite(site.id);
   return c.json({ ok: true });

@@ -66,6 +66,8 @@ export function Account() {
         </form>
       )}
 
+      <EmailReports />
+
       {!me.hosted && me.user?.id === 'admin' && <Staff />}
     </div>
   );
@@ -124,6 +126,59 @@ function Staff() {
       </form>
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
       {created && <NewLogin {...created} onDone={() => setCreated(null)} />}
+    </section>
+  );
+}
+
+interface ReportSite {
+  id: string;
+  name: string;
+  domain: string;
+  frequency: 'weekly' | 'monthly' | null;
+}
+
+/** Your own email reports: off, weekly or monthly for each site you can see. */
+function EmailReports() {
+  const [data, setData] = useState<{ sites: ReportSite[]; email: string | null; sending: boolean } | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api<typeof data>('/api/reports').then(setData).catch((e) => setError((e as Error).message));
+  }, []);
+
+  async function set(site: ReportSite, frequency: string) {
+    setError('');
+    try {
+      await api(`/api/reports/${site.id}`, { method: 'PUT', json: { frequency } });
+      setData((d) => d && { ...d, sites: d.sites.map((s) => (s.id === site.id ? { ...s, frequency: frequency === 'off' ? null : (frequency as ReportSite['frequency']) } : s)) });
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  if (!data?.sites.length) return error ? <p className="text-sm text-red-600">{error}</p> : null;
+  return (
+    <section className="card p-6">
+      <h2 className="text-lg font-semibold">Email reports</h2>
+      <p className="mt-1 text-sm text-stone-500">
+        A short summary of how each site did, with its key numbers, sent{data.email ? ` to ${data.email}` : ''} on Monday mornings (weekly) or the 1st of the month (monthly).
+      </p>
+      <ul className="mt-3 divide-y divide-stone-100 text-sm">
+        {data.sites.map((s) => (
+          <li key={s.id} className="flex items-center gap-3 py-2">
+            <span className="min-w-0 flex-1 truncate">
+              {s.name}
+              {s.name !== s.domain && <span className="text-stone-400"> · {s.domain}</span>}
+            </span>
+            <select className="input w-auto py-1" value={s.frequency ?? 'off'} onChange={(e) => set(s, e.target.value)} aria-label={`Email report for ${s.domain}`}>
+              <option value="off">Off</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+          </li>
+        ))}
+      </ul>
+      {!data.sending && <p className="mt-3 text-xs text-stone-500">Email sending isn’t switched on yet, so nothing is sent for now.</p>}
+      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
     </section>
   );
 }

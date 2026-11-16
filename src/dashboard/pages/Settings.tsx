@@ -222,6 +222,8 @@ window.minilytics('identify', { email: user.email, name: user.name });`}</Code>
 
       {site.role === 'admin' && <ClientOwner site={site} onChange={(owner_id) => setSite({ ...site, owner_id })} />}
 
+      <Reports site={site} />
+
       {site.role !== 'manager' && (
         <Section title="Danger zone">
           <button
@@ -244,6 +246,82 @@ interface Person {
   id: string;
   email: string;
   role: 'viewer' | 'manager';
+  /** Their email report for this site. */
+  report?: 'weekly' | 'monthly' | null;
+}
+
+type ReportFrequency = 'off' | 'weekly' | 'monthly';
+
+/** Admin only: someone's email report for this site. */
+function PersonReport({ siteId, person, onError }: { siteId: string; person: { id: string; email: string; report?: string | null }; onError: (m: string) => void }) {
+  const [value, setValue] = useState<ReportFrequency>((person.report as ReportFrequency) ?? 'off');
+  useEffect(() => setValue((person.report as ReportFrequency) ?? 'off'), [person.report]);
+  return (
+    <select
+      className="input w-auto py-1 text-stone-600"
+      value={value}
+      title="Email report"
+      aria-label={`Email report for ${person.email}`}
+      onChange={async (e) => {
+        const next = e.target.value as ReportFrequency;
+        const prev = value;
+        setValue(next);
+        try {
+          await api(`/api/sites/${siteId}/people/${person.id}/report`, { method: 'PUT', json: { frequency: next } });
+        } catch (err) {
+          setValue(prev);
+          onError((err as Error).message);
+        }
+      }}
+    >
+      <option value="off">No report</option>
+      <option value="weekly">Weekly report</option>
+      <option value="monthly">Monthly report</option>
+    </select>
+  );
+}
+
+/** Email reports: what they look like, and a test send. Each person picks their own in Account. */
+function Reports({ site }: { site: Site }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  async function test() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await api<{ to: string; summary: boolean }>(`/api/sites/${site.id}/report/test`, { method: 'POST', json: { frequency: 'weekly' } });
+      setMsg({ ok: true, text: `Sent to ${r.to}.${r.summary ? '' : ' (Without the written summary: the Claude API key isn’t set up.)'}` });
+    } catch (err) {
+      setMsg({ ok: false, text: (err as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Section
+      title="Email reports"
+      desc={
+        <>
+          A weekly or monthly email with a short written summary of how the site did, the key numbers and its top sources, pages and countries. Each
+          person turns theirs on or off in <a className="underline" href="/account" onClick={(e) => (e.preventDefault(), navigate('/account'))}>Account</a>
+          {site.role === 'admin' ? ', and you can set anyone’s in People above' : ''}.
+        </>
+      }
+    >
+      <div className="flex flex-wrap gap-2">
+        <a className="btn" href={`/api/sites/${site.id}/report/preview?frequency=weekly`} target="_blank" rel="noreferrer">
+          Preview weekly
+        </a>
+        <a className="btn" href={`/api/sites/${site.id}/report/preview?frequency=monthly`} target="_blank" rel="noreferrer">
+          Preview monthly
+        </a>
+        <button className="btn-dark" onClick={test} disabled={busy}>
+          {busy ? 'Sending…' : 'Email me a test'}
+        </button>
+      </div>
+      {msg && <p className={`mt-3 text-sm ${msg.ok ? 'text-green-700' : 'text-red-600'}`}>{msg.text}</p>}
+    </Section>
+  );
 }
 
 /** A new login's temporary password, shown once to whoever created it. */
@@ -268,7 +346,7 @@ export function NewLogin({ email, password, onDone }: { email: string; password:
 
 /** Who else can log in to see this site. */
 function People({ site, onOwnerRemoved, onOwnerChanged }: { site: Site; onOwnerRemoved: () => void; onOwnerChanged: (ownerId: string) => void }) {
-  const [data, setData] = useState<{ owner: { email: string } | null; members: Person[] } | null>(null);
+  const [data, setData] = useState<{ owner: { id: string; email: string; report?: Person['report'] } | null; members: Person[] } | null>(null);
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<Person['role']>('viewer');
   const [error, setError] = useState('');
@@ -348,6 +426,7 @@ function People({ site, onOwnerRemoved, onOwnerChanged }: { site: Site; onOwnerR
       <ul className="divide-y divide-stone-100 text-sm">
         <li className="flex items-center gap-3 py-2">
           <span className="min-w-0 flex-1 truncate">{site.owner_id ? data?.owner?.email ?? '…' : 'Admin'}</span>
+          {site.role === 'admin' && data?.owner && <PersonReport siteId={site.id} person={data.owner} onError={setError} />}
           {site.role === 'admin' && site.owner_id ? (
             <>
               <select
@@ -371,6 +450,7 @@ function People({ site, onOwnerRemoved, onOwnerChanged }: { site: Site; onOwnerR
         {data?.members.map((p) => (
           <li key={p.id} className="flex items-center gap-3 py-2">
             <span className="min-w-0 flex-1 truncate">{p.email}</span>
+            {site.role === 'admin' && <PersonReport siteId={site.id} person={p} onError={setError} />}
             <select
               className="input w-auto py-1"
               value={p.role}

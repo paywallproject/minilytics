@@ -68,7 +68,7 @@ function filterSql(f: Filters): { sql: string; params: unknown[] } {
 
 const hasFilters = (f: Filters) => Object.keys(f).length > 0;
 
-interface Ctx {
+export interface Ctx {
   db: D1Database;
   site: Site;
   range: Range;
@@ -79,8 +79,12 @@ interface Ctx {
 }
 
 export async function makeCtx(c: Context<AppEnv>): Promise<Ctx> {
-  const site = c.get('site');
-  const q = c.req.query();
+  return ctxFor(c.env.DB, c.get('site'), c.req.query());
+}
+
+/** The same, outside a request (scheduled reports): `q` is what the dashboard would put in the query string. */
+export async function ctxFor(db: D1Database, site: Site, q: Record<string, string>): Promise<Ctx> {
+  const c = { env: { DB: db } };
   const imp = await loadImport(c.env.DB, site);
   // "All time" starts with the imported history when there is one.
   const importStart = imp ? (parseDay(imp.dateFrom, site.timezone) ?? site.created_at) : site.created_at;

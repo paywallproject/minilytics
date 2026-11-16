@@ -34,6 +34,18 @@ export interface Env {
   MONTHLY_PRODUCT_ID?: string;
   MONTHLY_PRICE?: string;
   SUPPORT_EMAIL?: string;
+
+  // ---- Email reports, all optional. Without them nothing is emailed.
+  /** The dashboard's public address, used for links in emails, e.g. https://analytics.example.com */
+  PUBLIC_URL?: string;
+  /** Amazon SES: an IAM key allowed ses:SendEmail, and the region the sending domain is verified in. */
+  SES_ACCESS_KEY_ID?: string;
+  SES_SECRET_ACCESS_KEY?: string;
+  SES_REGION?: string;
+  /** Sender, e.g. "Minilytics <reports@example.com>" (its domain must be verified in SES). */
+  REPORT_FROM?: string;
+  /** Claude writes the summary at the top of each report. Without a key, reports are sent without it. */
+  ANTHROPIC_API_KEY?: string;
 }
 
 export interface Site {
