@@ -99,25 +99,42 @@ export async function removePerson(c: Context<AppEnv>) {
 export async function transferSite(c: Context<AppEnv>) {
   if (c.get('role') !== 'admin') return c.json({ error: 'Only the admin can move a site to a client.' }, 403);
   const site = c.get('site');
-  const b = await c.req.json<{ email?: string }>().catch(() => ({}) as { email?: string });
+  const b = await c.req.json<{ email?: string; keepPreviousAs?: string }>().catch(() => ({}) as { email?: string; keepPreviousAs?: string });
   const email = cleanEmail(b.email);
   const problem = emailProblem(c, email);
   if (problem) return c.json({ error: problem }, 400);
   const account = await findOrCreateAccount(c.env.DB, email);
-  await c.env.DB.batch([
+  const stmts = [
     c.env.DB.prepare('UPDATE sites SET owner_id = ? WHERE id = ?').bind(account.id, site.id),
     // The new owner doesn't also need a member row.
     c.env.DB.prepare('DELETE FROM site_members WHERE site_id = ? AND user_id = ?').bind(site.id, account.id),
-  ]);
+  ];
+  // Optionally keep the previous owner on the site as a manager or viewer.
+  if (site.owner_id && site.owner_id !== account.id && isMemberRole(b.keepPreviousAs)) stmts.push(keepAsMember(c, site.owner_id, b.keepPreviousAs));
+  await c.env.DB.batch(stmts);
   forgetSite(site.id);
   return c.json({ owner: { id: account.id, email, password: account.password } });
 }
 
-/** Give a client's site back to the admin (no owner). */
+const isMemberRole = (r: unknown): r is MemberRole => (ROLES as readonly unknown[]).includes(r);
+const keepAsMember = (c: Context<AppEnv>, userId: string, role: MemberRole) =>
+  c.env.DB.prepare(
+    `INSERT INTO site_members (site_id, user_id, role, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT (site_id, user_id) DO UPDATE SET role = excluded.role`,
+  ).bind(c.get('site').id, userId, role, Date.now());
+
+/**
+ * Give a client's site back to the admin (no owner). With `keepAs` (viewer or manager) the owner stays on the
+ * site at that level instead of losing access, i.e. the owner is changed to a viewer or manager.
+ */
 export async function untransferSite(c: Context<AppEnv>) {
   if (c.get('role') !== 'admin') return c.json({ error: 'Only the admin can do this.' }, 403);
-  await c.env.DB.prepare('UPDATE sites SET owner_id = NULL WHERE id = ?').bind(c.get('site').id).run();
-  forgetSite(c.get('site').id);
+  const site = c.get('site');
+  const b = await c.req.json<{ keepAs?: string }>().catch(() => ({}) as { keepAs?: string });
+  const stmts = [c.env.DB.prepare('UPDATE sites SET owner_id = NULL WHERE id = ?').bind(site.id)];
+  if (site.owner_id && isMemberRole(b.keepAs)) stmts.push(keepAsMember(c, site.owner_id, b.keepAs));
+  await c.env.DB.batch(stmts);
+  forgetSite(site.id);
   return c.json({ ok: true });
 }
 

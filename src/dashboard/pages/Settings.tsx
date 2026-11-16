@@ -218,7 +218,7 @@ window.minilytics('identify', { email: user.email, name: user.name });`}</Code>
         </div>
       )}
 
-      <People site={site} />
+      <People site={site} onOwnerRemoved={() => setSite({ ...site, owner_id: null })} onOwnerChanged={(owner_id) => setSite({ ...site, owner_id })} />
 
       {site.role === 'admin' && <ClientOwner site={site} onChange={(owner_id) => setSite({ ...site, owner_id })} />}
 
@@ -267,7 +267,7 @@ export function NewLogin({ email, password, onDone }: { email: string; password:
 }
 
 /** Who else can log in to see this site. */
-function People({ site }: { site: Site }) {
+function People({ site, onOwnerRemoved, onOwnerChanged }: { site: Site; onOwnerRemoved: () => void; onOwnerChanged: (ownerId: string) => void }) {
   const [data, setData] = useState<{ owner: { email: string } | null; members: Person[] } | null>(null);
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<Person['role']>('viewer');
@@ -278,7 +278,43 @@ function People({ site }: { site: Site }) {
   const load = () => api<typeof data>(`/api/sites/${site.id}/people`).then(setData).catch((e) => setError((e as Error).message));
   useEffect(() => {
     load();
-  }, [site.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [site.id, site.owner_id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * Admin only: take the site off its owner. It goes back into the admin account; their login stays.
+   * With `keepAs` they stay on the site as a manager or viewer instead of losing access.
+   */
+  async function removeOwner(keepAs?: Person['role']) {
+    const who = data?.owner?.email ?? 'the owner';
+    const msg = keepAs
+      ? `Change ${who} from owner to ${keepAs} of ${site.domain}? The site goes back into the admin account, and they keep ${keepAs} access.`
+      : `Remove ${who} as owner of ${site.domain}? They lose access and the site goes back into the admin account. Their login isn't deleted, and other people on the site keep their access.`;
+    if (!confirm(msg)) return;
+    setError('');
+    try {
+      await api(`/api/sites/${site.id}/transfer`, { method: 'DELETE', json: keepAs ? { keepAs } : {} });
+      onOwnerRemoved();
+      window.dispatchEvent(new Event(SITES_CHANGED));
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  /** Admin only: make someone already on the site its owner. The current owner (if any) stays on as a manager. */
+  async function makeOwner(p: Person) {
+    const current = site.owner_id ? data?.owner?.email : null;
+    if (!confirm(`Make ${p.email} the owner of ${site.domain}?${current ? ` ${current} stays on the site as a manager.` : ''}`)) return;
+    setError('');
+    try {
+      const r = await api<{ owner: { id: string } }>(`/api/sites/${site.id}/transfer`, { method: 'POST', json: { email: p.email, keepPreviousAs: 'manager' } });
+      onOwnerChanged(r.owner.id);
+      window.dispatchEvent(new Event(SITES_CHANGED));
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
@@ -312,14 +348,38 @@ function People({ site }: { site: Site }) {
       <ul className="divide-y divide-stone-100 text-sm">
         <li className="flex items-center gap-3 py-2">
           <span className="min-w-0 flex-1 truncate">{site.owner_id ? data?.owner?.email ?? '…' : 'Admin'}</span>
-          <span className="text-stone-500">Owner</span>
+          {site.role === 'admin' && site.owner_id ? (
+            <>
+              <select
+                className="input w-auto py-1"
+                value="owner"
+                onChange={(e) => e.target.value !== 'owner' && removeOwner(e.target.value as Person['role'])}
+                aria-label="Owner's level"
+              >
+                <option value="owner">Owner</option>
+                <option value="manager">Manager</option>
+                <option value="viewer">Viewer</option>
+              </select>
+              <button className="text-stone-400 hover:text-red-600" onClick={() => removeOwner()} aria-label="Remove owner" title="Remove owner">
+                ✕
+              </button>
+            </>
+          ) : (
+            <span className="text-stone-500">Owner</span>
+          )}
         </li>
         {data?.members.map((p) => (
           <li key={p.id} className="flex items-center gap-3 py-2">
             <span className="min-w-0 flex-1 truncate">{p.email}</span>
-            <select className="input w-auto py-1" value={p.role} onChange={(e) => change(p, e.target.value as Person['role'])} aria-label={`Role for ${p.email}`}>
-              <option value="viewer">Viewer</option>
+            <select
+              className="input w-auto py-1"
+              value={p.role}
+              onChange={(e) => (e.target.value === 'owner' ? makeOwner(p) : change(p, e.target.value as Person['role']))}
+              aria-label={`Role for ${p.email}`}
+            >
+              {site.role === 'admin' && <option value="owner">Owner</option>}
               <option value="manager">Manager</option>
+              <option value="viewer">Viewer</option>
             </select>
             <button className="text-stone-400 hover:text-red-600" onClick={() => change(p, null)} aria-label={`Remove ${p.email}`} title="Remove">
               ✕
