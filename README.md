@@ -378,7 +378,7 @@ No analytics tool is 100% accurate. These are the main gaps and how this project
   rewrite). Payments are always recorded by the webhook, even when the visitor's browser blocked tracking.
 - **Safari** keeps cookies set by JavaScript for at most 7 days. A Safari visitor who returns after more than a week counts as new. The
   email fallback above recovers most of these payments.
-- **Direct visits wait for a person.** A new visit with no referrer and no campaign tags is only counted once the visitor moves the mouse, scrolls, taps, clicks or types, so bots that load pages and do nothing never appear. Add `data-count-all` to the script tag to count every visit straight away.
+- **Optional: Direct visits wait for a person.** For a site flooded by bots that load pages and do nothing, add `data-require-interaction` to its script tag. A new visit with no referrer and no campaign tags is then only counted once the visitor moves the mouse, scrolls, taps, clicks or types. Off by default, so every other site counts every visit as before.
 - **Bots** are filtered by user agent (the [isbot](https://github.com/omrilotan/isbot) list plus our own rules), the `navigator.webdriver` flag, network (visits from cloud and hosting providers such as AWS, Google Cloud, Azure and DigitalOcean are ignored) and referrer spam ([Matomo's list](https://github.com/matomo-org/referrer-spam-list), refreshed with `node scripts/update-referrer-spam.mjs`).
 - Revenue in a different currency than the site's is converted only when Dodo gives a settlement amount in the site's currency. Polar amounts are stored in the order's currency.
 

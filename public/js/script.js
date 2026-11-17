@@ -8,8 +8,8 @@
   var siteId = script.getAttribute('data-website-id');
   var endpoint = script.getAttribute('data-api') || new URL(script.src).origin + '/api/event';
   var allowLocal = script.hasAttribute('data-allow-localhost');
-  // Count every visit at once, even Direct ones nobody interacts with (see "held" below).
-  var countAll = script.hasAttribute('data-count-all');
+  // Opt-in for sites flooded by page-loading bots: wait for a sign of a person before counting a Direct visit (see "held" below).
+  var requireInteraction = script.hasAttribute('data-require-interaction');
   var cookieDomain = script.getAttribute('data-domain');
   var VID = 'ml_vid', SID = 'ml_sid', YEAR = 31536000, SESSION = 1800;
 
@@ -126,8 +126,8 @@
     var data = { r: firstView ? d.referrer : '', tz: firstView ? timeZone() : undefined };
     // A new visit with no referrer and no campaign tags is where page-loading bots hide (they arrive "Direct" and
     // never touch the page). Hold its pageview until the first sign of a person: moving the mouse, scrolling,
-    // tapping, clicking or typing. Visits from anywhere else are counted straight away.
-    if (firstView && newSession && !countAll && !externalReferrer() && !/[?&](utm_\w+|ref|via|gclid|fbclid|msclkid)=/i.test(loc.search)) held = data;
+    // tapping, clicking or typing. Visits from anywhere else are counted straight away. Only on sites that opt in.
+    if (firstView && newSession && requireInteraction && !externalReferrer() && !/[?&](utm_\w+|ref|via|gclid|fbclid|msclkid)=/i.test(loc.search)) held = data;
     else send('pageview', data);
     firstView = false;
   }

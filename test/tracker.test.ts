@@ -4,11 +4,11 @@ import { describe, expect, it } from 'vitest';
 const SRC = readFileSync(new URL('../public/js/script.js', import.meta.url), 'utf8');
 
 /** Runs the tracker in a tiny fake browser and returns what it sent plus a way to fire events. */
-function run(opts: { referrer?: string; search?: string; cookie?: string; attrs?: Record<string, string> } = {}) {
+function run(opts: { referrer?: string; search?: string; cookie?: string; attrs?: Record<string, string>; optIn?: boolean } = {}) {
   const sent: any[] = [];
   const listeners: Record<string, ((e: any) => void)[]> = {};
   let cookie = opts.cookie ?? '';
-  const attrs: Record<string, string> = { 'data-website-id': 'site12345', ...opts.attrs };
+  const attrs: Record<string, string> = { 'data-website-id': 'site12345', ...(opts.optIn === false ? {} : { 'data-require-interaction': '' }), ...opts.attrs };
   const document: any = {
     currentScript: { src: 'https://m.example/js/script.js', getAttribute: (k: string) => attrs[k] ?? null, hasAttribute: (k: string) => k in attrs },
     referrer: opts.referrer ?? '',
@@ -58,7 +58,12 @@ describe('tracker: Direct visits wait for a sign of a person', () => {
     expect(run({ referrer: 'https://news.example/other-page' }).sent).toEqual([]); // same-site referrer, no session yet
     expect(run({ search: '?utm_source=newsletter' }).sent.map((e) => e.t)).toEqual(['pageview']);
     expect(run({ cookie: 'ml_sid=abcdefgh-1234' }).sent.map((e) => e.t)).toEqual(['pageview']);
-    expect(run({ attrs: { 'data-count-all': '' } }).sent.map((e) => e.t)).toEqual(['pageview']);
+  });
+  it('counts every visit straight away on sites without data-require-interaction', () => {
+    const t = run({ optIn: false });
+    expect(t.sent.map((e) => e.t)).toEqual(['pageview']);
+    t.fire('scroll');
+    expect(t.sent.map((e) => e.t)).toEqual(['pageview', 'engage']);
   });
   it('sends the held pageview before a goal', () => {
     const t = run();
