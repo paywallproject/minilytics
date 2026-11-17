@@ -7,8 +7,11 @@ export interface ParsedUA {
 const BOT_RE =
   /bot|crawl|spider|slurp|facebookexternalhit|embedly|quora link preview|whatsapp|telegram|discord|preview|headless|phantom|puppeteer|playwright|selenium|lighthouse|pingdom|uptime|monitor|curl|wget|python|axios|node-fetch|go-http|java\/|okhttp|httpclient|vercel|chatgpt-user|gptbot|claudebot|perplexity|bytespider|ahrefs|semrush|mj12|dotbot/i;
 
+// Every real browser matches at least one of these; scripts with made-up user agents often match none.
+const KNOWN_UA_RE = /AppleWebKit|Chrome|Safari|Firefox|Opera|Windows|Macintosh|iPhone|iPad|Android|Linux|CrOS/;
+
 export function isBot(ua: string): boolean {
-  return !ua || BOT_RE.test(ua);
+  return !ua || BOT_RE.test(ua) || !KNOWN_UA_RE.test(ua);
 }
 
 // Order matters: in-app browsers and Chromium forks before Chrome, Chrome before Safari.

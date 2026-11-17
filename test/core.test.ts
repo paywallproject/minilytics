@@ -6,6 +6,7 @@ import { belongsTo, normalizePath } from '../src/worker/collect';
 import type { Env } from '../src/worker/env';
 import { verifyStandardWebhook, verifyStripeWebhook } from '../src/worker/lib/crypto';
 import { bucketLabels, granularitiesForSpan, resolveRange, startOfDay, tzOffset } from '../src/worker/lib/time';
+import { isHostingAsn } from '../src/worker/lib/datacenter';
 import { isBot, parseUA } from '../src/worker/lib/ua';
 
 describe('classify', () => {
@@ -44,7 +45,17 @@ describe('user agents', () => {
     expect(isBot('Mozilla/5.0 (compatible; Googlebot/2.1)')).toBe(true);
     expect(isBot('Mozilla/5.0 HeadlessChrome/120')).toBe(true);
     expect(isBot('')).toBe(true);
+    expect(isBot('Scraper/1.0 (+contact)')).toBe(true);
     expect(isBot('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/129 Safari/537.36')).toBe(false);
+  });
+});
+
+describe('hosting networks', () => {
+  it('flags cloud providers but not ISPs', () => {
+    expect(isHostingAsn(16509)).toBe(true); // AWS
+    expect(isHostingAsn(7922)).toBe(false); // Comcast
+    expect(isHostingAsn(13335)).toBe(false); // Cloudflare WARP users are real people
+    expect(isHostingAsn(undefined)).toBe(false);
   });
 });
 

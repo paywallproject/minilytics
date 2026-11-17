@@ -4,6 +4,7 @@ import { classify } from '../shared/sources';
 import { siteOwnerActive } from './auth';
 import { getSite, type AppEnv, type Site } from './env';
 import { isOwnerVisit } from './owner';
+import { isHostingAsn } from './lib/datacenter';
 import { isBot, parseUA } from './lib/ua';
 import { creditedSessionSql, dodoProductOfLink, firstTouchSessionSql, learnDodoProducts } from './payments';
 
@@ -42,7 +43,7 @@ export async function handleEvent(c: Context<AppEnv>) {
   if (!body || !isId(body.w) || !TYPES.has(body.t) || !isId(body.vid) || !isId(body.sid)) return c.body(null, 400);
 
   const ua = c.req.header('user-agent') ?? '';
-  if (isBot(ua)) return c.body(null, 202);
+  if (isBot(ua) || fromHostingNetwork(c)) return c.body(null, 202);
 
   const site = await getSite(c.env.DB, body.w);
   if (!site) return c.body(null, 404);
@@ -62,6 +63,19 @@ export async function handleEvent(c: Context<AppEnv>) {
 
   await ingest(c.env.DB, site, body, url, ua, geoOf(c), Date.now());
   return c.body(null, 202);
+}
+
+/**
+ * Scrapers and stealth headless browsers run the script with a normal-looking Chrome user agent, but from
+ * cloud servers rather than people's ISPs. Skipped when the script is proxied through the site's own
+ * server, because then we see the proxy's network (often AWS), not the visitor's.
+ */
+function fromHostingNetwork(c: Context<AppEnv>): boolean {
+  if (c.req.header('x-vercel-ip-country')) return false;
+  const fwd = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
+  if (fwd && fwd !== c.req.header('cf-connecting-ip')) return false;
+  const cf = (c.req.raw as { cf?: IncomingRequestCfProperties }).cf;
+  return isHostingAsn(cf?.asn);
 }
 
 export interface Geo {
