@@ -46,6 +46,10 @@ export interface Env {
   REPORT_FROM?: string;
   /** Claude writes the summary at the top of each report. Without a key, reports are sent without it. */
   ANTHROPIC_API_KEY?: string;
+
+  // ---- Human check (Cloudflare Turnstile, Invisible widget for this app's hostname). Without both, it's off.
+  TURNSTILE_SITE_KEY?: string;
+  TURNSTILE_SECRET?: string;
 }
 
 export interface Site {

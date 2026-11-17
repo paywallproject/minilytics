@@ -1,6 +1,7 @@
 import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { handleEvent } from './collect';
+import { humanFrame, humanResult } from './human';
 import { forgetSite, type AppEnv, type Site } from './env';
 import { ADMIN_ID, adminEmail, clearSession, currentUser, emailLogin, googleCallback, googleStart, isHosted, requireUser, setSession, signupOpen, siteAccessSql, siteRole, type SiteRole, type User } from './auth';
 import { billingWebhook, checkout, planInfo } from './billing';
@@ -37,6 +38,9 @@ app.use('*', async (c, next) => {
 
 app.use('/api/event', cors({ origin: '*', allowMethods: ['POST', 'OPTIONS'], maxAge: 86400 }));
 app.post('/api/event', handleEvent);
+// Invisible human check (Turnstile) in a hidden frame, once per browser. Measure-only for now.
+app.get('/api/human/frame', humanFrame);
+app.post('/api/human', humanResult);
 app.post('/api/webhooks/dodo/:siteId', handleDodoWebhook);
 app.post('/api/webhooks/stripe/:siteId', handleStripeWebhook);
 app.post('/api/webhooks/polar/:siteId', handlePolarWebhook);
