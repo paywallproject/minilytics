@@ -36,9 +36,15 @@ export function GoalsPanel({ totalVisitors }: { totalVisitors: number }) {
 }
 
 function Goals({ totalVisitors }: { totalVisitors: number }) {
-  const { site, q, reloadKey, money, addFilter } = useDash();
-  const { data } = useApi<BreakdownRow[]>(`/api/sites/${site.id}/breakdown?${qs(q, { dim: 'goal' })}`, reloadKey);
-  if (!data) return <div className="h-40 animate-pulse" />;
+  const { site, q, reloadKey, money, addFilter, removeFilter } = useDash();
+  const { data: rows } = useApi<BreakdownRow[]>(`/api/sites/${site.id}/breakdown?${qs(q, { dim: 'goal' })}`, reloadKey);
+  if (!rows) return <div className="h-40 animate-pulse" />;
+  // With a goal picked, the dashboard only counts visits that include it: the other rows are what those people
+  // also did in the same visits. Keep the picked goal first and measure the rest against it.
+  const selected = q.filters.goal ?? null;
+  const picked = selected ? rows.find((r) => r.label === selected) : undefined;
+  const data = picked ? [picked, ...rows.filter((r) => r !== picked)] : rows;
+  const base = picked?.visitors || totalVisitors;
   if (!data.length)
     return (
       <div className="p-8 text-center text-sm text-stone-500">
@@ -46,9 +52,22 @@ function Goals({ totalVisitors }: { totalVisitors: number }) {
         <code className="rounded bg-stone-100 px-1">window.minilytics('goal', 'signup')</code>.
       </div>
     );
+  // "people saw the paid subscribe wall" for goals we can describe, "the goal File Download" for the rest.
+  const selectedInfo = goalInfo(selected);
+  const selectedPhrase = selectedInfo ? `people ${selectedInfo.charAt(0).toLowerCase()}${selectedInfo.slice(1)}` : `people did ${selected ?? ''}`;
   const th = 'cursor-help pb-2 text-right font-medium underline decoration-stone-300 decoration-dotted underline-offset-4';
   return (
     <div className="overflow-x-auto">
+      {selected && (
+        <div className="mx-3 mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-violet-50 px-4 py-2.5 text-sm text-violet-900">
+          <span>
+            Showing visits where <b>{selectedPhrase}</b>. The other goals below happened in those same visits.
+          </span>
+          <button className="font-medium underline-offset-2 hover:underline" onClick={() => removeFilter('goal')}>
+            Show all goals
+          </button>
+        </div>
+      )}
       <table className="w-full min-w-[560px] text-sm">
         <thead>
           <tr className="text-left text-stone-500">
@@ -59,8 +78,15 @@ function Goals({ totalVisitors }: { totalVisitors: number }) {
             <th className={th} title="Total times it happened. One person can do it several times, e.g. hitting the paywall on several articles">
               Times
             </th>
-            <th className={th} title="People who did this, as a share of all visitors in the period">
-              % of visitors
+            <th
+              className={th}
+              title={
+                selected
+                  ? `People who did this, as a share of the ${selectedPhrase.replace(/^people /, 'people who ')}`
+                  : 'People who did this, as a share of all visitors in the period'
+              }
+            >
+              {selected ? '% of those people' : '% of visitors'}
             </th>
             <th
               className={`${th} px-3`}
@@ -73,20 +99,24 @@ function Goals({ totalVisitors }: { totalVisitors: number }) {
         <tbody>
           {data.map((g) => {
             const info = goalInfo(g.label);
+            const isPicked = g === picked;
             return (
               <tr
                 key={g.label}
-                className="cursor-pointer border-t border-stone-100 hover:bg-stone-50"
-                onClick={() => addFilter('goal', g.label ?? '')}
-                title="Filter the dashboard to people who did this"
+                className={`cursor-pointer border-t border-stone-100 ${isPicked ? 'bg-violet-50/60 hover:bg-violet-50' : 'hover:bg-stone-50'}`}
+                onClick={() => (isPicked ? removeFilter('goal') : addFilter('goal', g.label ?? ''))}
+                title={isPicked ? 'Click again to show all goals' : 'Show only visits where people did this'}
               >
                 <td className="px-3 py-2.5">
-                  <div className="font-medium">{info ?? g.label}</div>
+                  <div className={`font-medium ${isPicked ? 'text-violet-800' : ''}`}>
+                    {isPicked && '✓ '}
+                    {info ?? g.label}
+                  </div>
                   {info && <div className="font-mono text-xs text-stone-400">{g.label}</div>}
                 </td>
                 <td className="py-2.5 text-right">{fmtNumber(g.visitors)}</td>
                 <td className="py-2.5 text-right">{fmtNumber(g.pageviews ?? 0)}</td>
-                <td className="py-2.5 text-right">{totalVisitors ? fmtPct(g.visitors / totalVisitors, 1) : '—'}</td>
+                <td className="py-2.5 text-right">{base ? fmtPct(g.visitors / base, 1) : '—'}</td>
                 <td className="px-3 py-2.5 text-right">
                   {g.revenue ? money(g.revenue) : <span className="text-stone-300">—</span>}
                   {g.customers > 0 && (

@@ -70,10 +70,13 @@ export function Dashboard({ siteId, fallback, header }: { siteId: string; fallba
   const { data: overview, loading } = useApi<Overview>(site ? `/api/sites/${siteId}/overview?${qs(q)}` : null, reloadKey);
 
   const addFilter = useCallback((key: string, value: string) => update({ filters: { ...q.filters, [key]: value } }), [q.filters, update]);
-  const removeFilter = (key: string) => {
-    const { [key]: _, ...rest } = q.filters;
-    update({ filters: rest });
-  };
+  const removeFilter = useCallback(
+    (key: string) => {
+      const { [key]: _, ...rest } = q.filters;
+      update({ filters: rest });
+    },
+    [q.filters, update],
+  );
 
   const dash: Dash | null = useMemo(() => {
     if (!site) return null;
@@ -85,10 +88,11 @@ export function Dashboard({ siteId, fallback, header }: { siteId: string; fallba
       decimals,
       money: (minor, compact) => fmtMoney(minor, site.currency, decimals, compact),
       addFilter,
+      removeFilter,
       openVisitor: setVisitor,
       readOnly,
     };
-  }, [site, q, reloadKey, overview?.decimals, addFilter, readOnly]);
+  }, [site, q, reloadKey, overview?.decimals, addFilter, removeFilter, readOnly]);
 
   if (siteError && fallback) return <>{fallback}</>;
   if (siteError) {

@@ -8,6 +8,7 @@ export interface Dash {
   decimals: number;
   money: (minor: number, compact?: boolean) => string;
   addFilter: (key: string, value: string) => void;
+  removeFilter: (key: string) => void;
   openVisitor: (visitorId: string) => void;
   /** Someone else's public site: hide anything that edits it or links to its settings. */
   readOnly: boolean;
