@@ -6,9 +6,10 @@
   X-Frame-Options: DENY
   Content-Security-Policy: frame-ancestors 'none'; object-src 'none'; base-uri 'self'
 
+# Short, so tracker fixes reach every browser within minutes (it is revalidated cheaply after that).
 /js/script.js
   Access-Control-Allow-Origin: *
-  Cache-Control: public, max-age=3600
+  Cache-Control: public, max-age=300
 
 # Vite file names change with every build, so these can be cached forever.
 /assets/*
