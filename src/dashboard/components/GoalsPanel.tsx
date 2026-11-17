@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { usePref } from '../lib/prefs';
 import { api, qs, type BreakdownRow } from '../lib/api';
+import { goalInfo } from '../../shared/goals';
 import { displayName } from '../../shared/names';
 import { useDash } from '../lib/context';
 import { countryName, fmtAgo, fmtDateTime, fmtDuration, fmtNumber, fmtPct } from '../lib/format';
@@ -45,29 +46,61 @@ function Goals({ totalVisitors }: { totalVisitors: number }) {
         <code className="rounded bg-stone-100 px-1">window.minilytics('goal', 'signup')</code>.
       </div>
     );
+  const th = 'cursor-help pb-2 text-right font-medium underline decoration-stone-300 decoration-dotted underline-offset-4';
   return (
-    <table className="w-full text-sm">
-      <thead>
-        <tr className="text-left text-stone-500">
-          <th className="px-3 pb-2 font-medium">Goal</th>
-          <th className="pb-2 text-right font-medium">Visitors</th>
-          <th className="pb-2 text-right font-medium">Completions</th>
-          <th className="pb-2 text-right font-medium">Conversion</th>
-          <th className="px-3 pb-2 text-right font-medium">Revenue</th>
-        </tr>
-      </thead>
-      <tbody>
-        {data.map((g) => (
-          <tr key={g.label} className="cursor-pointer border-t border-stone-100 hover:bg-stone-50" onClick={() => addFilter('goal', g.label ?? '')} title="Filter by visitors who completed this goal">
-            <td className="px-3 py-2.5 font-medium">🎯 {g.label}</td>
-            <td className="py-2.5 text-right">{fmtNumber(g.visitors)}</td>
-            <td className="py-2.5 text-right">{fmtNumber(g.pageviews ?? 0)}</td>
-            <td className="py-2.5 text-right">{totalVisitors ? fmtPct(g.visitors / totalVisitors, 1) : '—'}</td>
-            <td className="px-3 py-2.5 text-right">{money(g.revenue)}</td>
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[560px] text-sm">
+        <thead>
+          <tr className="text-left text-stone-500">
+            <th className="px-3 pb-2 font-medium">Goal</th>
+            <th className={th} title="Different people who did this at least once">
+              People
+            </th>
+            <th className={th} title="Total times it happened. One person can do it several times, e.g. hitting the paywall on several articles">
+              Times
+            </th>
+            <th className={th} title="People who did this, as a share of all visitors in the period">
+              % of visitors
+            </th>
+            <th
+              className={`${th} px-3`}
+              title="Paid in this period by people who did this. One payment shows on every goal the payer did, so these don't add up to total revenue"
+            >
+              Revenue
+            </th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {data.map((g) => {
+            const info = goalInfo(g.label);
+            return (
+              <tr
+                key={g.label}
+                className="cursor-pointer border-t border-stone-100 hover:bg-stone-50"
+                onClick={() => addFilter('goal', g.label ?? '')}
+                title="Filter the dashboard to people who did this"
+              >
+                <td className="px-3 py-2.5">
+                  <div className="font-medium">{info ?? g.label}</div>
+                  {info && <div className="font-mono text-xs text-stone-400">{g.label}</div>}
+                </td>
+                <td className="py-2.5 text-right">{fmtNumber(g.visitors)}</td>
+                <td className="py-2.5 text-right">{fmtNumber(g.pageviews ?? 0)}</td>
+                <td className="py-2.5 text-right">{totalVisitors ? fmtPct(g.visitors / totalVisitors, 1) : '—'}</td>
+                <td className="px-3 py-2.5 text-right">
+                  {g.revenue ? money(g.revenue) : <span className="text-stone-300">—</span>}
+                  {g.customers > 0 && (
+                    <div className="text-xs text-stone-400">
+                      {g.customers} payer{g.customers > 1 ? 's' : ''}
+                    </div>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

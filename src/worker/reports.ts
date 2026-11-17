@@ -5,6 +5,7 @@ import { ADMIN_ID, adminEmail, isAdminEmail, isHosted } from './auth';
 import type { Env, Site } from './env';
 import { signToken } from './lib/crypto';
 import { breakdown, ctxFor, overview, type BreakdownRow } from './stats';
+import { goalInfo } from '../shared/goals';
 
 export type Frequency = 'weekly' | 'monthly';
 export const FREQUENCIES: readonly Frequency[] = ['weekly', 'monthly'];
@@ -309,7 +310,7 @@ export function renderEmail(data: ReportData, summary: string | null, links: Ema
   const pages = data.pages.map((r) => ({ label: r.label ?? '/', visitors: r.visitors }));
   const sources = data.sources.map((r) => ({ label: r.label ?? 'Direct', visitors: r.visitors, extra: r.revenue ? fmtMoney(r.revenue, data) : undefined }));
   const countries = data.countries.map((r) => ({ label: countryName(r.label), visitors: r.visitors }));
-  const goals = data.goals.map((r) => ({ label: r.label ?? '', visitors: r.visitors }));
+  const goals = data.goals.map((r) => ({ label: goalInfo(r.label) ?? r.label ?? '', visitors: r.visitors }));
   const quiet = k.visitors === 0;
   const renewals = k.renewals ?? 0;
   const renewalNote = renewals

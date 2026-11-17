@@ -58,8 +58,8 @@ export function OverviewCard({ data, onLive }: { data: Overview | null; onLive: 
             <div className="flex flex-wrap items-center gap-x-2">
               <Change cur={c![k.key as keyof Kpis]} prev={p![k.key as keyof Kpis]} invert={k.invert} />
               {k.key === 'revenue' && c!.renewals > 0 && (
-                <span className="text-xs text-stone-400" title="Automatic subscription renewals: no visit involved">
-                  {c!.renewals >= c!.revenue ? 'all renewals' : `${money(c!.renewals, true)} renewals`}
+                <span className="text-xs text-stone-400" title="New = first payments from new subscribers. Renewals = automatic subscription renewals, no visit involved. See who paid in the Journey tab below">
+                  {c!.renewals >= c!.revenue ? 'all renewals' : `${money(c!.revenue - c!.renewals, true)} new · ${money(c!.renewals, true)} renewals`}
                 </span>
               )}
             </div>
@@ -134,8 +134,14 @@ export function OverviewCard({ data, onLive }: { data: Overview | null; onLive: 
                       <div className="mb-2 font-medium">{bucketLabel(d.bucket, g, true)}</div>
                       <Row color="bg-visitors" label="Visitors" value={fmtNumber(d.visitors)} />
                       <Row color="bg-stone-300" label="Pageviews" value={fmtNumber(d.pageviews)} />
-                      <Row color="bg-revenue" label="Revenue" value={money(d.revenue)} />
-                      {d.renewals > 0 && <Row color="bg-revenueSoft" label="Renewals" value={money(d.renewals)} />}
+                      {d.renewals > 0 ? (
+                        <>
+                          <Row color="bg-revenue" label="New revenue" value={money(d.revenue - d.renewals)} />
+                          <Row color="bg-revenueSoft" label="Renewals" value={money(d.renewals)} />
+                        </>
+                      ) : (
+                        <Row color="bg-revenue" label="Revenue" value={money(d.revenue)} />
+                      )}
                       {d.payments > 0 && <Row color="bg-stone-200" label="Payments" value={String(d.payments)} />}
                     </div>
                   );
