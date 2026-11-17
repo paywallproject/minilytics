@@ -7,7 +7,7 @@ import type { Env } from '../src/worker/env';
 import { verifyStandardWebhook, verifyStripeWebhook } from '../src/worker/lib/crypto';
 import { bucketLabels, granularitiesForSpan, resolveRange, startOfDay, tzOffset } from '../src/worker/lib/time';
 import { isHostingAsn } from '../src/worker/lib/datacenter';
-import { isBot, parseUA } from '../src/worker/lib/ua';
+import { isBot, isSpamReferrer, parseUA } from '../src/worker/lib/ua';
 
 describe('classify', () => {
   it('maps t.co to X / social', () => {
@@ -46,6 +46,17 @@ describe('user agents', () => {
     expect(isBot('Mozilla/5.0 HeadlessChrome/120')).toBe(true);
     expect(isBot('')).toBe(true);
     expect(isBot('Scraper/1.0 (+contact)')).toBe(true);
+    expect(isBot('Mozilla/5.0 (compatible; Barkrowler/0.9; +https://babbar.tech/crawler)')).toBe(true);
+    expect(isBot('Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0 Mobile Safari/537.36')).toBe(false);
+    expect(isBot('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 350.0')).toBe(false);
+  });
+  it('spots referrer spam, including subdomains', () => {
+    const spam = [...['0-0.fr', '03e.info']][0];
+    expect(isSpamReferrer(`https://${spam}/x`)).toBe(true);
+    expect(isSpamReferrer(`https://www.sub.${spam}/`)).toBe(true);
+    expect(isSpamReferrer('https://www.google.com/')).toBe(false);
+    expect(isSpamReferrer('android-app://com.google.android.gm')).toBe(false);
+    expect(isSpamReferrer(undefined)).toBe(false);
     expect(isBot('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/129 Safari/537.36')).toBe(false);
   });
 });

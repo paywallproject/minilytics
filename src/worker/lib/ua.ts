@@ -1,3 +1,6 @@
+import { isbot } from 'isbot';
+import { SPAM_DOMAINS } from './referrer-spam';
+
 export interface ParsedUA {
   browser: string;
   os: string;
@@ -11,7 +14,21 @@ const BOT_RE =
 const KNOWN_UA_RE = /AppleWebKit|Chrome|Safari|Firefox|Opera|Windows|Macintosh|iPhone|iPad|Android|Linux|CrOS/;
 
 export function isBot(ua: string): boolean {
-  return !ua || BOT_RE.test(ua) || !KNOWN_UA_RE.test(ua);
+  // isbot: a maintained, public-domain list of crawlers and tools (the role UA Inspector plays for Plausible).
+  return !ua || BOT_RE.test(ua) || !KNOWN_UA_RE.test(ua) || isbot(ua);
+}
+
+/** Referrer spam: the referrer's domain, or any domain above it, is on Matomo's spam list. */
+export function isSpamReferrer(referrer: unknown): boolean {
+  if (typeof referrer !== 'string' || !referrer) return false;
+  let host: string;
+  try {
+    host = new URL(referrer).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return false;
+  }
+  for (let h = host; h.includes('.'); h = h.slice(h.indexOf('.') + 1)) if (SPAM_DOMAINS.has(h)) return true;
+  return false;
 }
 
 // Order matters: in-app browsers and Chromium forks before Chrome, Chrome before Safari.

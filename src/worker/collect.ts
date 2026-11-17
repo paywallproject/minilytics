@@ -5,7 +5,7 @@ import { siteOwnerActive } from './auth';
 import { getSite, type AppEnv, type Site } from './env';
 import { isOwnerVisit } from './owner';
 import { isHostingAsn } from './lib/datacenter';
-import { isBot, parseUA } from './lib/ua';
+import { isBot, isSpamReferrer, parseUA } from './lib/ua';
 import { creditedSessionSql, dodoProductOfLink, firstTouchSessionSql, learnDodoProducts } from './payments';
 
 const TYPES = new Set(['pageview', 'goal', 'outbound', 'ping', 'identify']);
@@ -43,7 +43,7 @@ export async function handleEvent(c: Context<AppEnv>) {
   if (!body || !isId(body.w) || !TYPES.has(body.t) || !isId(body.vid) || !isId(body.sid)) return c.body(null, 400);
 
   const ua = c.req.header('user-agent') ?? '';
-  if (isBot(ua) || fromHostingNetwork(c)) return c.body(null, 202);
+  if (isBot(ua) || fromHostingNetwork(c) || isSpamReferrer(body.r)) return c.body(null, 202);
 
   const site = await getSite(c.env.DB, body.w);
   if (!site) return c.body(null, 404);
