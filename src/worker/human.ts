@@ -71,8 +71,11 @@ export async function humanResult(c: Context<AppEnv>) {
   const site = await getSite(c.env.DB, b.w);
   if (!site) return c.json({ ok: false }, 404);
 
-  let result: 1 | 0 | -1 = -1;
   let detail = typeof b.error === 'string' ? b.error.slice(0, 40) : 'no token';
+  // Turnstile doesn't hand a bot a failing token: it reports an error code in the browser instead. 300xxx and
+  // 600xxx mean the challenge itself failed (Cloudflare's "probably a bot"), so they count as failed. Anything else
+  // (script blocked, timeout, unsupported browser, config) means the check couldn't run.
+  let result: 1 | 0 | -1 = /^[36]\d{5}$/.test(detail) ? 0 : -1;
   if (typeof b.token === 'string' && b.token.length < 4096) {
     const form = new FormData();
     form.append('secret', secret);
