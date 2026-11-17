@@ -662,7 +662,25 @@ app.all('*', async (c) => {
   // Signed-in pages are private and unknown paths shouldn't rank: keep both out of search results.
   if (!PUBLIC_PAGES.test(path)) headers.set('X-Robots-Tag', 'noindex');
   const status = PUBLIC_PAGES.test(path) || APP_PAGES.test(path) ? 200 : 404;
-  return new Response(index.body, { status, headers });
+  const res = new Response(index.body, { status, headers });
+  // A shared link to a public dashboard previews (Slack, iMessage, email) with the site's name and domain,
+  // not the Minilytics homepage. Private sites keep the generic tags so their name never leaks.
+  const dash = /^\/site\/([\w-]+)\/?$/.exec(path);
+  if (!dash) return res;
+  const site = await c.env.DB.prepare('SELECT name, domain FROM sites WHERE id = ? AND public = 1')
+    .bind(dash[1])
+    .first<{ name: string; domain: string }>();
+  if (!site) return res;
+  const title = `${site.name}${site.name.toLowerCase() !== site.domain.toLowerCase() ? ` (${site.domain})` : ''} · Minilytics`;
+  const description = `Live visitor and revenue stats for ${site.domain}, shared with Minilytics.`;
+  return new HTMLRewriter()
+    .on('title', { element: (el) => void el.setInnerContent(title) })
+    .on('meta[property="og:title"], meta[name="twitter:title"]', { element: (el) => void el.setAttribute('content', title) })
+    .on('meta[name="description"], meta[property="og:description"], meta[name="twitter:description"]', {
+      element: (el) => void el.setAttribute('content', description),
+    })
+    .on('meta[property="og:url"], link[rel="canonical"]', { element: (el) => void el.remove() })
+    .transform(res);
 });
 
 export default {

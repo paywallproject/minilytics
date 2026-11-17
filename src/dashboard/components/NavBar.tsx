@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { navigate, useMe } from '../App';
 import { api, type Site } from '../lib/api';
+import { DashContext } from '../lib/context';
 import { useApi } from '../lib/useApi';
 import { Favicon } from './Icons';
 import { Dropdown } from './Toolbar';
@@ -30,16 +31,36 @@ const Mark = () => (
   </svg>
 );
 
-/** The bar on a public dashboard seen without logging in. */
+/** The bar on a public dashboard seen without logging in: says whose site the stats are for. */
 export function PublicBar() {
+  const site = useContext(DashContext)?.site;
   return (
     <header className="sticky top-0 z-30 border-b border-stone-200/80 bg-white/85 backdrop-blur">
       <nav className="mx-auto flex h-14 max-w-[1480px] items-center gap-2 px-3 sm:px-6">
         <span className="flex items-center gap-2 px-1.5">
           <Mark />
-          <span className="font-semibold tracking-tight">Minilytics</span>
+          <span className="hidden font-semibold tracking-tight md:inline">Minilytics</span>
         </span>
-        <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-500">Public dashboard</span>
+        {site && (
+          <>
+            <span className="text-stone-300">/</span>
+            <span className="flex min-w-0 items-center gap-2 px-1.5 text-sm">
+              <Favicon domain={site.domain} size={18} />
+              <span className="truncate font-medium">{site.name}</span>
+              {site.name.toLowerCase() !== site.domain.toLowerCase() && (
+                <a
+                  className="hidden truncate text-stone-500 hover:text-ink hover:underline sm:inline"
+                  href={`https://${site.domain}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {site.domain}
+                </a>
+              )}
+            </span>
+          </>
+        )}
+        <span className="hidden rounded-full bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-500 sm:inline">Public dashboard</span>
         <button className="btn ml-auto py-1.5" onClick={() => navigate('/')}>
           Log in
         </button>
@@ -95,7 +116,12 @@ export function NavBar({ path }: { path: string }) {
                   {site ? (
                     <>
                       <Favicon domain={site.domain} size={18} />
-                      <span className="max-w-[72px] truncate sm:max-w-[200px]">{site.name}</span>
+                      <span className="max-w-[72px] truncate sm:max-w-[200px]" title={site.domain}>
+                        {site.name}
+                      </span>
+                      {site.name.toLowerCase() !== site.domain.toLowerCase() && (
+                        <span className="hidden max-w-[200px] truncate font-normal text-stone-400 lg:inline">{site.domain}</span>
+                      )}
                     </>
                   ) : (
                     <span className="text-stone-600">All websites</span>

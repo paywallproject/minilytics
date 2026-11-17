@@ -59,6 +59,14 @@ export function Dashboard({ siteId, fallback, header }: { siteId: string; fallba
   // Your own site, or someone's public site (then it comes back read-only).
   const { data: site, error: siteError } = useApi<Site>(`/api/sites/${siteId}`);
   const readOnly = !!site?.readOnly;
+  // Name the tab after the site, so a shared link (and a row of open tabs) says whose stats these are.
+  useEffect(() => {
+    if (!site) return;
+    document.title = `${site.name}${site.name.toLowerCase() !== site.domain.toLowerCase() ? ` (${site.domain})` : ''} · Minilytics`;
+    return () => {
+      document.title = 'Minilytics';
+    };
+  }, [site]);
   const { data: overview, loading } = useApi<Overview>(site ? `/api/sites/${siteId}/overview?${qs(q)}` : null, reloadKey);
 
   const addFilter = useCallback((key: string, value: string) => update({ filters: { ...q.filters, [key]: value } }), [q.filters, update]);
