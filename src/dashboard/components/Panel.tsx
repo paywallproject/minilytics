@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
+import { goalInfo } from '../../shared/goals';
 import { usePref } from '../lib/prefs';
 import { qs, type BreakdownRow } from '../lib/api';
 import { useDash } from '../lib/context';
@@ -19,6 +20,8 @@ export function renderLabel(dim: string, row: Pick<BreakdownRow, 'label' | 'extr
   const l = row.label;
   const text = (s: ReactNode) => <span className="truncate">{s}</span>;
   switch (dim) {
+    case 'goal':
+      return <span className="truncate" title={l ?? undefined}>{goalInfo(l) ?? l}</span>;
     case 'channel':
       return (
         <>
