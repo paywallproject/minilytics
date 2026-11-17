@@ -46,7 +46,7 @@ export function OverviewCard({ data, onLive }: { data: Overview | null; onLive: 
         {kpis.map((k) => (
           <button
             key={k.key}
-            className={`border-stone-100 px-5 py-4 text-left lg:border-r ${k.metric ? 'hover:bg-stone-50' : 'cursor-default'}`}
+            className={`flex flex-col justify-start border-stone-100 px-5 py-4 text-left lg:border-r ${k.metric ? 'hover:bg-stone-50' : 'cursor-default'}`}
             onClick={() => k.metric && setHidden((h) => ({ ...h, [k.metric!]: !h[k.metric!] }))}
             title={k.metric ? 'Show/hide on chart' : undefined}
           >
