@@ -5,10 +5,11 @@ import { siteOwnerActive } from './auth';
 import { getSite, type AppEnv, type Site } from './env';
 import { isOwnerVisit } from './owner';
 import { isHostingAsn } from './lib/datacenter';
+import { botSignals } from './lib/signals';
 import { isBot, isSpamReferrer, parseUA } from './lib/ua';
 import { creditedSessionSql, dodoProductOfLink, firstTouchSessionSql, learnDodoProducts } from './payments';
 
-const TYPES = new Set(['pageview', 'goal', 'outbound', 'ping', 'identify']);
+const TYPES = new Set(['pageview', 'goal', 'outbound', 'ping', 'identify', 'engage']);
 const MAX_PING_MS = 10 * 60_000;
 
 interface Payload {
@@ -22,6 +23,8 @@ interface Payload {
   n?: string;
   p?: Record<string, unknown>;
   d?: number;
+  /** The browser's timezone (pageviews only). */
+  tz?: string;
 }
 
 const clip = (s: unknown, n = 255): string | null =>
@@ -61,7 +64,20 @@ export async function handleEvent(c: Context<AppEnv>) {
   // Owners checking their own site would otherwise show up as visitors and "online".
   if (await isOwnerVisit(c, site)) return c.body(null, 202);
 
-  await ingest(c.env.DB, site, body, url, ua, geoOf(c), Date.now());
+  const now = Date.now();
+  const direct = !isProxied(c);
+  const signals =
+    body.t === 'pageview'
+      ? botSignals({
+          ua,
+          secChUa: c.req.header('sec-ch-ua') ?? null,
+          browserTz: body.tz,
+          ipTz: direct ? ((cfOf(c)?.timezone as string | undefined) ?? null) : (c.req.header('x-vercel-ip-timezone') ?? null),
+          direct,
+          now,
+        })
+      : [];
+  await ingest(c.env.DB, site, body, url, ua, geoOf(c), now, signals.join(',') || null);
   return c.body(null, 202);
 }
 
@@ -71,12 +87,17 @@ export async function handleEvent(c: Context<AppEnv>) {
  * server, because then we see the proxy's network (often AWS), not the visitor's.
  */
 function fromHostingNetwork(c: Context<AppEnv>): boolean {
-  if (c.req.header('x-vercel-ip-country')) return false;
-  const fwd = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
-  if (fwd && fwd !== c.req.header('cf-connecting-ip')) return false;
-  const cf = (c.req.raw as { cf?: IncomingRequestCfProperties }).cf;
-  return isHostingAsn(cf?.asn);
+  return !isProxied(c) && isHostingAsn(cfOf(c)?.asn);
 }
+
+/** True when the event reached us through the site's own server rather than straight from the browser. */
+function isProxied(c: Context<AppEnv>): boolean {
+  if (c.req.header('x-vercel-ip-country')) return true;
+  const fwd = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
+  return !!fwd && fwd !== c.req.header('cf-connecting-ip');
+}
+
+const cfOf = (c: Context<AppEnv>) => (c.req.raw as { cf?: IncomingRequestCfProperties }).cf;
 
 export interface Geo {
   country: string | null;
@@ -132,6 +153,7 @@ export async function ingest(
   ua: string,
   geo: Geo,
   now: number,
+  signals: string | null = null,
 ) {
   const path = normalizePath(url.pathname);
   const { t, vid, sid } = body;
@@ -142,6 +164,12 @@ export async function ingest(
       .prepare('UPDATE sessions SET duration = duration + ?, last_seen_at = ? WHERE site_id = ? AND id = ?')
       .bind(ms, now, site.id, sid)
       .run();
+    return;
+  }
+
+  // The visitor scrolled, tapped, clicked or typed: something a page-loading bot rarely does.
+  if (t === 'engage') {
+    await db.prepare('UPDATE sessions SET engaged = 1 WHERE site_id = ? AND id = ?').bind(site.id, sid).run();
     return;
   }
 
@@ -188,7 +216,7 @@ export async function ingest(
 
   const stmts: D1PreparedStatement[] = [];
   if (!existing) {
-    stmts.push(...newSession(db, site, body, url, path, ua, geo, now));
+    stmts.push(...newSession(db, site, body, url, path, ua, geo, now, signals));
   }
 
   if (t === 'pageview') {
@@ -286,6 +314,7 @@ function newSession(
   ua: string,
   geo: Geo,
   now: number,
+  signals: string | null,
 ): D1PreparedStatement[] {
   let referrer: string | null = null;
   let referrerDomain: string | null = null;
@@ -322,8 +351,8 @@ function newSession(
       .prepare(
         `INSERT OR IGNORE INTO sessions (site_id, id, visitor_id, started_at, last_seen_at, pageviews, hostname, entry_page, exit_page,
           referrer, referrer_domain, source, channel, utm_source, utm_medium, utm_campaign, utm_term, utm_content, ref,
-          country, region, city, browser, os, device, lat, lon)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          country, region, city, browser, os, device, lat, lon, signals)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         site.id,
@@ -352,6 +381,7 @@ function newSession(
         device,
         geo.lat,
         geo.lon,
+        signals,
       ),
     // Separate statement so concurrent first events (pageview + goal racing) never double count.
     ...(pageviews

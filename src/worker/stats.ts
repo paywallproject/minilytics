@@ -293,6 +293,9 @@ const SESSION_DIMS: Record<string, string> = {
   exit_page: 's.exit_page',
   hostname: 's.hostname',
   referrer: 's.referrer',
+  // Bot checks under evaluation (not shown in the dashboard).
+  signals: "COALESCE(s.signals, 'none')",
+  engaged: 's.engaged',
 };
 
 export interface BreakdownRow {

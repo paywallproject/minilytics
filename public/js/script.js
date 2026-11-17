@@ -118,9 +118,22 @@
     if (lastPage !== null) flushTime(false);
     lastPage = page;
     pings = 0;
-    send('pageview', { r: firstView ? d.referrer : '' });
+    send('pageview', { r: firstView ? d.referrer : '', tz: firstView ? timeZone() : undefined });
     firstView = false;
   }
+  function timeZone() {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return undefined; }
+  }
+
+  // ---- engagement: the first real scroll, tap, click or keypress on this page (bots that only load pages never send it)
+  var engaged = false;
+  function onEngage(e) {
+    if (engaged || (e && e.isTrusted === false)) return;
+    engaged = true;
+    ['scroll', 'pointerdown', 'keydown', 'touchstart'].forEach(function (t) { w.removeEventListener(t, onEngage, true); });
+    send('engage', {}, true);
+  }
+  ['scroll', 'pointerdown', 'keydown', 'touchstart'].forEach(function (t) { w.addEventListener(t, onEngage, { capture: true, passive: true }); });
   var hist = w.history;
   if (hist && hist.pushState) {
     ['pushState', 'replaceState'].forEach(function (fn) {
