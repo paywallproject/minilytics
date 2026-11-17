@@ -299,6 +299,7 @@ const SESSION_DIMS: Record<string, string> = {
   engaged: 's.engaged',
   // Turnstile: '1' passed, '0' failed, '-1' couldn't run, NULL not checked. Admins only (see index.ts).
   human: 'CAST(s.human AS TEXT)',
+  human_reason: 's.human_reason',
 };
 
 export interface BreakdownRow {

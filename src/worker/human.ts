@@ -99,12 +99,11 @@ export async function humanResult(c: Context<AppEnv>) {
   const now = Date.now();
   await c.env.DB.batch([
     // A pass is final for the visit; a failure or error never overwrites a pass.
-    c.env.DB.prepare('UPDATE sessions SET human = CASE WHEN human = 1 THEN 1 ELSE ? END WHERE site_id = ? AND id = ? AND visitor_id = ?').bind(
-      result,
-      site.id,
-      b.sid,
-      b.vid,
-    ),
+    c.env.DB.prepare(
+      `UPDATE sessions SET human = CASE WHEN human = 1 THEN 1 ELSE ? END,
+         human_reason = CASE WHEN human = 1 THEN human_reason ELSE ? END
+       WHERE site_id = ? AND id = ? AND visitor_id = ?`,
+    ).bind(result, detail.slice(0, 60), site.id, b.sid, b.vid),
     ...(result === 1 ? [c.env.DB.prepare('UPDATE visitors SET human_at = ? WHERE site_id = ? AND id = ?').bind(now, site.id, b.vid)] : []),
   ]);
   return c.json({ ok: result === 1 });

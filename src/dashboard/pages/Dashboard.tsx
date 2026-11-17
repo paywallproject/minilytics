@@ -202,7 +202,12 @@ export function Dashboard({ siteId, fallback, header }: { siteId: string; fallba
               numbers yet. Click a row to filter the dashboard, e.g. Failed by country or entry page.
             </p>
             <div className="grid gap-5 lg:grid-cols-2">
-              <Panel tabs={[{ label: 'Human check', dim: 'human', filter: 'human' }]} />
+              <Panel
+                tabs={[
+                  { label: 'Human check', dim: 'human', filter: 'human' },
+                  { label: 'Reason', dim: 'human_reason' },
+                ]}
+              />
             </div>
           </div>
         )}
