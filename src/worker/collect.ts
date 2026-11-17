@@ -134,6 +134,7 @@ export async function ingest(
   if (t === 'identify') {
     const p = body.p ?? {};
     const email = clip(p.email, 200)?.toLowerCase() ?? null;
+    const loginName = clip(p.name, 128) || email || clip(p.user_id, 128) || null;
     await db.batch([
       db.prepare('INSERT OR IGNORE INTO visitors (site_id, id, first_seen) VALUES (?, ?, ?)').bind(site.id, vid, now),
       db
@@ -141,6 +142,15 @@ export async function ingest(
           'UPDATE visitors SET user_id = COALESCE(?, user_id), email = COALESCE(?, email), name = COALESCE(?, name) WHERE site_id = ? AND id = ?',
         )
         .bind(clip(p.user_id, 128), email, clip(p.name, 128), site.id, vid),
+      // The site says who is logged in on every page; keep the first one per visit (and per account) so the
+      // visitor's timeline shows they were logged in, and from when.
+      db
+        .prepare(
+          `INSERT INTO events (site_id, session_id, visitor_id, ts, type, name, path, props)
+           SELECT ?, ?, ?, ?, 'identify', ?, ?, NULL
+           WHERE NOT EXISTS (SELECT 1 FROM events WHERE site_id = ? AND session_id = ? AND type = 'identify' AND name IS ?)`,
+        )
+        .bind(site.id, sid, vid, now, loginName, path, site.id, sid, loginName),
       // A subscriber who logs in now is linked to their earlier payments that had no visit (e.g. automatic
       // renewals), credited to how they first arrived. Payments matched some other way are left alone.
       ...(email

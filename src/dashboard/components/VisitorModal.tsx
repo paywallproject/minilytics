@@ -1,3 +1,4 @@
+import { goalInfo } from '../../shared/goals';
 import { displayName } from '../../shared/names';
 import { useDash } from '../lib/context';
 import { countryName, fmtAgo, fmtDateTime, fmtDuration } from '../lib/format';
@@ -84,6 +85,9 @@ export function VisitorModal({ visitorId, onClose }: { visitorId: string | null;
                     {s.utm_campaign && <span className="rounded-md bg-amber-50 px-2 py-0.5 text-amber-700">campaign: {s.utm_campaign}</span>}
                     {s.ref && <span className="rounded-md bg-amber-50 px-2 py-0.5 text-amber-700">ref: {s.ref}</span>}
                     <span className="text-stone-400">{fmtDuration(s.duration)}</span>
+                    {bySession.get(s.id)?.some((e) => e.type === 'identify') && (
+                      <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-emerald-700">🔑 Logged in</span>
+                    )}
                   </div>
                   <ol className="mt-2 space-y-1 text-sm">
                     {evs.map((e, i) => (
@@ -93,8 +97,11 @@ export function VisitorModal({ visitorId, onClose }: { visitorId: string | null;
                         </span>
                         {e.type === 'pageview' && <span className="text-stone-700">📄 {e.path}</span>}
                         {e.type === 'goal' && (
-                          <span className="font-medium text-violet-700">
-                            🎯 {e.name} <span className="font-normal text-stone-400">on {e.path}</span>
+                          <GoalLine name={e.name} path={e.path} props={e.props} />
+                        )}
+                        {e.type === 'identify' && (
+                          <span className="text-emerald-700" title="The site reported this reader as logged in from this point in the visit">
+                            🔑 Logged in{e.name ? ` as ${e.name}` : ''}
                           </span>
                         )}
                         {e.type === 'outbound' && <span className="text-stone-600">↗ Left to {e.name?.replace(/^https?:\/\//, '')}</span>}
@@ -138,5 +145,23 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
       <div className="text-xs text-stone-500">{label}</div>
       <div className={`mt-0.5 truncate font-semibold ${accent ? 'text-revenue' : ''}`}>{value}</div>
     </div>
+  );
+}
+
+/** A goal in the visit timeline: what it means in plain English, with the raw name and its details on hover. */
+function GoalLine({ name, path, props }: { name: string | null; path: string; props: string | null }) {
+  const info = goalInfo(name);
+  let details: Record<string, unknown> = {};
+  try {
+    details = props ? JSON.parse(props) : {};
+  } catch {}
+  const plan = typeof details.plan === 'string' ? details.plan : null;
+  const tip = [`Goal: ${name}`, ...Object.entries(details).map(([k, v]) => `${k}: ${String(v)}`)].join('\n');
+  return (
+    <span className="cursor-help font-medium text-violet-700" title={tip}>
+      🎯 {info ?? name}
+      {plan && <span className="font-normal text-violet-500"> ({plan})</span>}{' '}
+      <span className="font-normal text-stone-400">on {path}</span>
+    </span>
   );
 }
