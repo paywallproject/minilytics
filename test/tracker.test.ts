@@ -55,6 +55,7 @@ describe('tracker: Direct visits wait for a sign of a person', () => {
   });
   it('counts visits with a referrer, campaign tags or an existing session straight away', () => {
     expect(run({ referrer: 'https://www.google.com/' }).sent.map((e) => e.t)).toEqual(['pageview']);
+    expect(run({ referrer: 'https://news.example/other-page' }).sent).toEqual([]); // same-site referrer, no session yet
     expect(run({ search: '?utm_source=newsletter' }).sent.map((e) => e.t)).toEqual(['pageview']);
     expect(run({ cookie: 'ml_sid=abcdefgh-1234' }).sent.map((e) => e.t)).toEqual(['pageview']);
     expect(run({ attrs: { 'data-count-all': '' } }).sent.map((e) => e.t)).toEqual(['pageview']);

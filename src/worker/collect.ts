@@ -23,6 +23,8 @@ interface Payload {
   n?: string;
   p?: Record<string, unknown>;
   d?: number;
+  /** Tracker version (absent before the Direct-visit hold). */
+  v?: number;
   /** The browser's timezone (pageviews only). */
   tz?: string;
 }
@@ -77,6 +79,7 @@ export async function handleEvent(c: Context<AppEnv>) {
           now,
         })
       : [];
+  if (body.t === 'pageview' && body.v === undefined) signals.push('old_script');
   await ingest(c.env.DB, site, body, url, ua, geoOf(c), now, signals.join(',') || null);
   return c.body(null, 202);
 }

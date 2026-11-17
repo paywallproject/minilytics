@@ -87,7 +87,7 @@
     // Anything the visitor does (a goal, a click out, logging in) proves the held pageview is real; send it first.
     if (held && type !== 'ping' && extra !== held) release();
     var id = ids();
-    var body = { w: siteId, t: type, u: cleanUrl(loc.href), vid: id.vid, sid: id.sid, sw: w.screen ? screen.width : 0 };
+    var body = { w: siteId, t: type, u: cleanUrl(loc.href), vid: id.vid, sid: id.sid, sw: w.screen ? screen.width : 0, v: 2 };
     for (var k in extra) if (extra[k] !== undefined) body[k] = extra[k];
     var json = JSON.stringify(body);
     // text/plain keeps this a "simple" request: no CORS preflight, works with sendBeacon.
@@ -127,9 +127,17 @@
     // A new visit with no referrer and no campaign tags is where page-loading bots hide (they arrive "Direct" and
     // never touch the page). Hold its pageview until the first sign of a person: moving the mouse, scrolling,
     // tapping, clicking or typing. Visits from anywhere else are counted straight away.
-    if (firstView && newSession && !countAll && !d.referrer && !/[?&](utm_\w+|ref|via|gclid|fbclid|msclkid)=/i.test(loc.search)) held = data;
+    if (firstView && newSession && !countAll && !externalReferrer() && !/[?&](utm_\w+|ref|via|gclid|fbclid|msclkid)=/i.test(loc.search)) held = data;
     else send('pageview', data);
     firstView = false;
+  }
+  // A referrer from this same site doesn't count: a person who got here from another page of the site has already
+  // clicked or pressed a key there, which would have started their visit.
+  function externalReferrer() {
+    try {
+      var h = new URL(d.referrer).hostname;
+      return !!h && h !== loc.hostname && !(domain && (h === domain || h.slice(-domain.length - 1) === '.' + domain));
+    } catch (e) { return false; }
   }
   var held = null;
   function release() {
