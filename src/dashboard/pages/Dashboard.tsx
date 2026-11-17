@@ -32,6 +32,7 @@ const FILTER_LABELS: Record<string, { label: string; dim: string }> = {
   entry_page: { label: 'Entry page', dim: 'entry_page' },
   hostname: { label: 'Hostname', dim: 'hostname' },
   goal: { label: 'Completed goal', dim: 'goal' },
+  human: { label: 'Human check', dim: 'human' },
 };
 
 /** `fallback` replaces the page when the site can't be loaded (e.g. the login, for a private site seen logged out). */
@@ -193,6 +194,18 @@ export function Dashboard({ siteId, fallback, header }: { siteId: string; fallba
         <div className="mt-5">
           <GoalsPanel totalVisitors={overview?.current.visitors ?? 0} />
         </div>
+
+        {site.role === 'admin' && (
+          <div className="mt-5">
+            <p className="mb-2 text-xs text-stone-500">
+              Only you and staff see this. Cloudflare Turnstile checks each new browser once (invisible to readers). It doesn't change any
+              numbers yet. Click a row to filter the dashboard, e.g. Failed by country or entry page.
+            </p>
+            <div className="grid gap-5 lg:grid-cols-2">
+              <Panel tabs={[{ label: 'Human check', dim: 'human', filter: 'human' }]} />
+            </div>
+          </div>
+        )}
 
         <p className="mt-8 text-center text-xs text-stone-400">
           Times in {site.timezone} · Revenue in {site.currency}

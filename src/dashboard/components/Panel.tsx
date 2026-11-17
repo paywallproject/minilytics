@@ -91,6 +91,17 @@ export function renderLabel(dim: string, row: Pick<BreakdownRow, 'label' | 'extr
         </>
       );
     }
+    case 'human': {
+      const v = l === null || l === undefined ? null : String(l);
+      const [mark, label, color] =
+        v === '1' ? ['✓', 'Passed', 'text-emerald-600'] : v === '0' ? ['✗', 'Failed', 'text-red-600'] : v === '-1' ? ['–', "Couldn't run", 'text-stone-400'] : ['○', 'Not checked', 'text-stone-400'];
+      return (
+        <>
+          <span className={`w-4 text-center font-semibold ${color}`}>{mark}</span>
+          {text(label)}
+        </>
+      );
+    }
     default:
       return text(l ?? <span className="text-stone-400">(none)</span>);
   }

@@ -582,7 +582,10 @@ app.delete('/api/sites/:id', async (c) => {
 
 app.get('/api/sites/:id/overview', async (c) => c.json(await overview(await makeCtx(c))));
 
+// Bot-check dimensions under evaluation: only admins and staff see them.
+const ADMIN_DIMS = new Set(['human', 'signals', 'engaged']);
 app.get('/api/sites/:id/breakdown', async (c) => {
+  if (ADMIN_DIMS.has(c.req.query('dim') ?? '') && c.get('role') !== 'admin') return c.json({ error: 'Not available' }, 403);
   try {
     return c.json(await breakdown(await makeCtx(c), c.req.query('dim') ?? 'source', Number(c.req.query('limit')) || 100));
   } catch (e) {
