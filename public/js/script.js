@@ -8,6 +8,8 @@
   var siteId = script.getAttribute('data-website-id');
   var endpoint = script.getAttribute('data-api') || new URL(script.src).origin + '/api/event';
   var allowLocal = script.hasAttribute('data-allow-localhost');
+  // Count every visit at once, even Direct ones nobody interacts with (see "held" below).
+  var countAll = script.hasAttribute('data-count-all');
   var cookieDomain = script.getAttribute('data-domain');
   var VID = 'ml_vid', SID = 'ml_sid', YEAR = 31536000, SESSION = 1800;
 
@@ -49,6 +51,7 @@
     return null;
   }
   var domain = rootDomain();
+  var newSession = !readCookie(SID);
   function writeCookie(name, value, maxAge) {
     d.cookie = name + '=' + encodeURIComponent(value) + '; path=/; max-age=' + maxAge + '; SameSite=Lax' +
       (domain ? '; domain=' + domain : '') + (loc.protocol === 'https:' ? '; Secure' : '');
@@ -81,6 +84,8 @@
     } catch (e) { return href; }
   }
   function send(type, extra, beacon) {
+    // Anything the visitor does (a goal, a click out, logging in) proves the held pageview is real; send it first.
+    if (held && type !== 'ping' && extra !== held) release();
     var id = ids();
     var body = { w: siteId, t: type, u: cleanUrl(loc.href), vid: id.vid, sid: id.sid, sw: w.screen ? screen.width : 0 };
     for (var k in extra) if (extra[k] !== undefined) body[k] = extra[k];
@@ -99,7 +104,7 @@
   var pending = 0, pings = 0;
   function flushTime(beacon) {
     if (visibleSince) { pending += Date.now() - visibleSince; visibleSince = d.visibilityState === 'visible' ? Date.now() : 0; }
-    if (pending >= 1000) { send('ping', { d: Math.round(pending) }, beacon); pending = 0; }
+    if (pending >= 1000 && !held) { send('ping', { d: Math.round(pending) }, beacon); pending = 0; }
   }
   d.addEventListener('visibilitychange', function () {
     if (d.visibilityState === 'visible') visibleSince = Date.now();
@@ -118,22 +123,34 @@
     if (lastPage !== null) flushTime(false);
     lastPage = page;
     pings = 0;
-    send('pageview', { r: firstView ? d.referrer : '', tz: firstView ? timeZone() : undefined });
+    var data = { r: firstView ? d.referrer : '', tz: firstView ? timeZone() : undefined };
+    // A new visit with no referrer and no campaign tags is where page-loading bots hide (they arrive "Direct" and
+    // never touch the page). Hold its pageview until the first sign of a person: moving the mouse, scrolling,
+    // tapping, clicking or typing. Visits from anywhere else are counted straight away.
+    if (firstView && newSession && !countAll && !d.referrer && !/[?&](utm_\w+|ref|via|gclid|fbclid|msclkid)=/i.test(loc.search)) held = data;
+    else send('pageview', data);
     firstView = false;
+  }
+  var held = null;
+  function release() {
+    var data = held;
+    held = null;
+    if (data) send('pageview', data);
   }
   function timeZone() {
     try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return undefined; }
   }
 
-  // ---- engagement: the first real scroll, tap, click or keypress on this page (bots that only load pages never send it)
-  var engaged = false;
+  // ---- engagement: the first real mouse move, scroll, tap, click or keypress on this page (bots that only load pages never send it)
+  var engaged = false, ENGAGE = ['pointermove', 'scroll', 'pointerdown', 'keydown', 'touchstart'];
   function onEngage(e) {
     if (engaged || (e && e.isTrusted === false)) return;
     engaged = true;
-    ['scroll', 'pointerdown', 'keydown', 'touchstart'].forEach(function (t) { w.removeEventListener(t, onEngage, true); });
+    ENGAGE.forEach(function (t) { w.removeEventListener(t, onEngage, true); });
+    release();
     send('engage', {}, true);
   }
-  ['scroll', 'pointerdown', 'keydown', 'touchstart'].forEach(function (t) { w.addEventListener(t, onEngage, { capture: true, passive: true }); });
+  ENGAGE.forEach(function (t) { w.addEventListener(t, onEngage, { capture: true, passive: true }); });
   var hist = w.history;
   if (hist && hist.pushState) {
     ['pushState', 'replaceState'].forEach(function (fn) {
