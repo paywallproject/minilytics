@@ -47,6 +47,13 @@ describe('the hold: what counts a held visit', () => {
     expect(h('tz_mismatch', 15500)).toBe(true);
     expect(releasedByPage('tz_mismatch')).toBe(false);
   });
+  it('strict on a computer: an interaction plus 15s on screen', () => {
+    const d = (visible: number, engaged = 0) => releasedBy({ reason: 'tz_mismatch', visible, engaged, device: 'Desktop' });
+    expect(d(34000)).toBe(false); // Starlink crawler: 15s+ on the home page, never touched it
+    expect(d(3500, 1)).toBe(false);
+    expect(d(15500, 1)).toBe(true);
+    expect(releasedBy({ reason: 'tz_mismatch', visible: 15500, engaged: 0, device: 'Mobile' })).toBe(true);
+  });
   it('outside the audience: an interaction plus 15s on screen, or a login', () => {
     expect(holdReason({ url: new URL('https://news.example/story'), signals: [], device: 'Mobile', os: 'iOS', outside: true })).toBe('outside_audience');
     expect(h('outside_audience', 15500)).toBe(false); // the Nanjing crawler: 15.5s, no interaction

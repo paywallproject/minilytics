@@ -104,8 +104,8 @@ export async function handleEvent(c: Context<AppEnv>) {
       db.prepare('SELECT 1 FROM visitors WHERE site_id = ? AND id = ?').bind(site.id, body.vid),
       db
         .prepare(
-          `SELECT ts, body, signals, queued, visible, engaged, engage_kind, engage_ms, reason FROM held_visits
-           WHERE site_id = ? AND session_id = ? AND released_at IS NULL`,
+          `SELECT ts, body, signals, queued, visible, engaged, engage_kind, engage_ms, reason, json_extract(meta, '$.device') AS device
+           FROM held_visits WHERE site_id = ? AND session_id = ? AND released_at IS NULL`,
         )
         .bind(site.id, body.sid),
     ]);
@@ -136,7 +136,7 @@ export async function handleEvent(c: Context<AppEnv>) {
         .run();
       // An interaction that arrived before this pageview (see below) may already be enough.
       if (open?.engaged) {
-        const row = { ...open, reason, ts: now, body: raw, signals: signals.join(',') || null };
+        const row = { ...open, reason, device, ts: now, body: raw, signals: signals.join(',') || null };
         if (releasedBy(row)) await release(db, site, row, ua, geoOf(c), now);
       }
       return c.body(null, 202);
@@ -160,7 +160,7 @@ export async function handleEvent(c: Context<AppEnv>) {
     const held = await db
       .prepare(
         `UPDATE held_visits SET visible = visible + ? WHERE site_id = ? AND session_id = ? AND released_at IS NULL AND reason != ?
-         RETURNING ts, body, signals, queued, visible, engaged, engage_kind, engage_ms, reason`,
+         RETURNING ts, body, signals, queued, visible, engaged, engage_kind, engage_ms, reason, json_extract(meta, '$.device') AS device`,
       )
       .bind(ms, site.id, body.sid, EARLY)
       .first<HeldRow>();
@@ -171,8 +171,8 @@ export async function handleEvent(c: Context<AppEnv>) {
   } else {
     const held = await db
       .prepare(
-        `SELECT ts, body, signals, queued, visible, engaged, engage_kind, engage_ms, reason FROM held_visits
-         WHERE site_id = ? AND session_id = ? AND released_at IS NULL`,
+        `SELECT ts, body, signals, queued, visible, engaged, engage_kind, engage_ms, reason, json_extract(meta, '$.device') AS device
+         FROM held_visits WHERE site_id = ? AND session_id = ? AND released_at IS NULL`,
       )
       .bind(site.id, body.sid)
       .first<HeldRow>();
@@ -242,6 +242,7 @@ const EARLY = 'early_goal';
 
 interface HeldRow {
   reason: string;
+  device?: string | null;
   ts: number;
   body: string;
   signals: string | null;

@@ -12,7 +12,8 @@
  *    Only a login counts.
  *  - strict: browser timezone doesn't match the IP's location (2.2% of real readers vs 24% of one-time), old
  *    Chrome (0.3% vs 7.3%), no client hints (0.1% vs 2.8%), Linux on a computer (0.6% vs 3.5%), first page deep in
- *    an archive (0% vs 4.3%). Counted after 15s on screen (a touch alone isn't enough: the crawler fakes one).
+ *    an archive (0% vs 4.3%). Counted after 15s on screen (a touch alone isn't enough: the crawler fakes one); on a
+ *    computer, 15s on screen plus an interaction.
  *  - outside: from a country the site's real readers don't come from (audience.ts), any device. Counted after an
  *    interaction within 15s of loading plus 15s on screen, or a login. 1.0% of real readers' first visits vs 11%
  *    of one-time.
@@ -72,7 +73,7 @@ export const STRICT_VISIBLE_MS = 15_000;
  */
 export const OUTSIDE_FIRST_TOUCH_MS = 15_000;
 
-export function releasedBy(held: { reason: string; visible: number; engaged: number; engage_ms?: number | null }): boolean {
+export function releasedBy(held: { reason: string; visible: number; engaged: number; engage_ms?: number | null; device?: string | null }): boolean {
   switch (tierOf(held.reason)) {
     case 'automated':
       return false;
@@ -82,6 +83,13 @@ export function releasedBy(held: { reason: string; visible: number; engaged: num
       // 15s on the page, touched or not. A touch plus a few seconds used to count, but the crawler now sends one
       // scripted mouse move 6-9s in and leaves at 3.5s (e.g. Newtown CT, timezone mismatch, on enewspf). Scored:
       // 3 more of 1,310 logged-in readers' first visits held.
+      // On a computer it also takes an interaction: people move the mouse, scroll or click, and a crawler on
+      // Starlink (enewspf, 2026-11-18, timezone mismatch) sat 15s on the home page and then opened a story without a
+      // single mouse move, scroll or key. Scored on first visits since interactions were recorded reliably (03:50
+      // UTC 2026-11-18): untouched strict-sign computer visits counted 35, all one-time; 0 of the real readers'
+      // computer first visits were untouched. On the larger earlier sample (interactions partly lost then), at most
+      // 4 real readers' first visits of ~1,700; they're counted when they come back.
+      if (held.device === 'Desktop') return !!held.engaged && held.visible >= STRICT_VISIBLE_MS;
       return held.visible >= STRICT_VISIBLE_MS;
     case 'light':
       // From outside the site's home region, time alone isn't enough (crawlers on home connections across the
