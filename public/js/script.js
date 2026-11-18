@@ -116,7 +116,7 @@
       shown += dt;
       visibleSince = d.visibilityState === 'visible' ? Date.now() : 0;
     }
-    if (pending >= 1000 && !held) { send('ping', { d: Math.round(pending) }, beacon); pending = 0; }
+    if (pending >= 1000 && !held) { send('ping', { d: Math.round(pending), a: early && acts ? acts + '.' + actSecs : undefined }, beacon); pending = 0; }
   }
   d.addEventListener('visibilitychange', function () {
     if (d.visibilityState === 'visible') { visibleSince = Date.now(); earlyAgain(); }
@@ -201,6 +201,16 @@
     send('engage', m, true);
   }
   ENGAGE.forEach(function (t) { w.addEventListener(t, onEngage, { capture: true, passive: true }); });
+  // How much the page is used in a visit's first minutes (measuring only): every trusted move, scroll, tap or key,
+  // and in how many separate seconds. A scripted crawler sends one mouse move; a person reading sends many.
+  var acts = 0, actSecs = 0, lastActSec = -1;
+  function onAct(e) {
+    if (!early || (e && e.isTrusted === false) || acts >= 999) return;
+    acts++;
+    var sec = Math.floor(Date.now() / 1000);
+    if (sec !== lastActSec) { lastActSec = sec; actSecs++; }
+  }
+  if (early) ENGAGE.forEach(function (t) { w.addEventListener(t, onAct, { capture: true, passive: true }); });
   var hist = w.history;
   if (hist && hist.pushState) {
     ['pushState', 'replaceState'].forEach(function (fn) {

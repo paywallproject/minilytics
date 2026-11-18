@@ -25,6 +25,7 @@ interface Payload {
   n?: string;
   p?: Record<string, unknown>;
   d?: number;
+  a?: string;
   /** Tracker version (absent before the Direct-visit hold). */
   v?: number;
   /** The browser's timezone (pageviews only). */
@@ -156,17 +157,20 @@ export async function handleEvent(c: Context<AppEnv>) {
   } else if (body.t === 'ping') {
     // Visible time on a held page: a reader who stays on it (even without touching anything) is released.
     const ms = Math.max(0, Math.min(MAX_PING_MS, Math.round(Number(body.d) || 0)));
+    const act = activityOf(body);
     const ses = await db
-      .prepare('UPDATE sessions SET duration = duration + ?, last_seen_at = ? WHERE site_id = ? AND id = ?')
-      .bind(ms, now, site.id, body.sid)
+      .prepare(
+        `UPDATE sessions SET duration = duration + ?, last_seen_at = ?, ${ACT_SET} WHERE site_id = ? AND id = ?`,
+      )
+      .bind(ms, now, act.events, act.secs, site.id, body.sid)
       .run();
     if (ses.meta.changes) return c.body(null, 202);
     const held = await db
       .prepare(
-        `UPDATE held_visits SET visible = visible + ? WHERE site_id = ? AND session_id = ? AND released_at IS NULL AND reason != ?
+        `UPDATE held_visits SET visible = visible + ?, ${ACT_SET} WHERE site_id = ? AND session_id = ? AND released_at IS NULL AND reason != ?
          RETURNING ts, body, signals, queued, visible, engaged, engage_kind, engage_ms, reason, json_extract(meta, '$.device') AS device`,
       )
-      .bind(ms, site.id, body.sid, EARLY)
+      .bind(ms, act.events, act.secs, site.id, body.sid, EARLY)
       .first<HeldRow>();
     if (held && releasedBy(held) && (await release(db, site, held, ua, geoOf(c), now))) {
       await ingest(db, site, { ...body, d: held.visible }, url, ua, geoOf(c), now);
@@ -259,6 +263,15 @@ interface HeldRow {
 
 const queuedOf = (q: string | null) => (q ? JSON.parse(q) : []) as { ts: number; body: Payload }[];
 
+/** Activity counts from an early ping ("events.seconds"), or nulls. */
+function activityOf(body: Payload): { events: number | null; secs: number | null } {
+  const m = typeof body.a === 'string' ? body.a.match(/^(\d{1,3})\.(\d{1,4})$/) : null;
+  return m ? { events: Number(m[1]), secs: Number(m[2]) } : { events: null, secs: null };
+}
+/** Keeps the largest counts seen (the tracker's counts only grow); leaves them alone when a ping has none. */
+const ACT_SET = `act_events = NULLIF(MAX(COALESCE(act_events, -1), COALESCE(?, -1)), -1),
+  act_secs = NULLIF(MAX(COALESCE(act_secs, -1), COALESCE(?, -1)), -1)`;
+
 /** Keeps an event (a goal, or a further page) with a held visit, to record if it's counted. */
 async function queueGoal(db: D1Database, site: Site, body: Payload, now: number, queued: string | null) {
   const q = queuedOf(queued);
@@ -291,9 +304,12 @@ async function release(db: D1Database, site: Site, held: HeldRow, ua: string, ge
     .run();
   if (!upd.meta.changes) return false;
   await ingest(db, site, first, new URL(first.u), ua, geo, held.ts, held.signals);
-  // Carry the bot detector's verdict over, if it came while the visit was held.
+  // Carry the bot detector's verdict and the activity counts over from the held visit.
   await db
-    .prepare('UPDATE sessions SET botd = (SELECT botd FROM held_visits WHERE site_id = ? AND session_id = ?) WHERE site_id = ? AND id = ? AND botd IS NULL')
+    .prepare(
+      `UPDATE sessions SET (botd, act_events, act_secs) = (SELECT COALESCE(sessions.botd, h.botd), h.act_events, h.act_secs
+         FROM held_visits h WHERE h.site_id = ? AND h.session_id = ?) WHERE site_id = ? AND id = ?`,
+    )
     .bind(site.id, first.sid, site.id, first.sid)
     .run();
   for (const q of queuedOf(held.queued)) await ingest(db, site, q.body, new URL(q.body.u), ua, geo, q.ts);

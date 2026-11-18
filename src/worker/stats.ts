@@ -300,6 +300,9 @@ const SESSION_DIMS: Record<string, string> = {
   engage_kind: 's.engage_kind',
   // Fingerprint's open-source bot detector, run on a new visit's first page (measuring only).
   botd: "COALESCE(s.botd, 'not run')",
+  // How much a new visit's first pages were used (measuring only): separate seconds with a move, scroll, tap or key.
+  activity: `CASE WHEN s.act_secs IS NULL THEN 'not measured' WHEN s.act_secs = 0 THEN '0s' WHEN s.act_secs = 1 THEN '1s'
+    WHEN s.act_secs <= 3 THEN '2-3s' WHEN s.act_secs <= 7 THEN '4-7s' ELSE '8s+' END`,
   // How soon after the page started loading the first interaction came (scripts tend to be instant or fixed).
   engage_delay: `CASE WHEN s.engage_ms IS NULL THEN NULL WHEN s.engage_ms < 500 THEN 'under 0.5s' WHEN s.engage_ms < 1000 THEN '0.5-1s'
     WHEN s.engage_ms < 2000 THEN '1-2s' WHEN s.engage_ms < 5000 THEN '2-5s' WHEN s.engage_ms < 15000 THEN '5-15s' ELSE '15s+' END`,

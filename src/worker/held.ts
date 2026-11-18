@@ -25,7 +25,7 @@ export async function heldReport(ctx: Ctx) {
       CASE WHEN engage_ms IS NULL THEN '?' WHEN engage_ms < 500 THEN 'under 0.5s' WHEN engage_ms < 2000 THEN '0.5-2s' ELSE '2s+' END END`),
     db
       .prepare(
-        `SELECT ts, reason, signals, visible, engaged, engage_kind, engage_ms, meta, json_extract(body, '$.u') AS url
+        `SELECT ts, reason, signals, visible, engaged, engage_kind, engage_ms, act_events, act_secs, meta, json_extract(body, '$.u') AS url
          FROM held_visits WHERE ${where} AND released_at IS NULL ORDER BY ts DESC LIMIT 50`,
       )
       .bind(...bind),
@@ -76,6 +76,7 @@ export async function botStudy(db: D1Database, from: number, to: number, domain?
         `SELECT s.country, s.region, s.channel, s.source = 'Google' AS google, s.device, s.os, s.browser, s.engaged,
            CASE WHEN s.duration = 0 THEN '0' WHEN s.duration < 3000 THEN '1-3' WHEN s.duration < 15000 THEN '3-15' ELSE '15+' END AS dur,
            COALESCE(s.signals, '') AS signals, s.pageviews > 1 AS multi, s.goals > 0 AS goals,
+           CASE WHEN s.act_secs IS NULL THEN NULL WHEN s.act_secs <= 1 THEN s.act_secs WHEN s.act_secs <= 3 THEN 2 WHEN s.act_secs <= 7 THEN 4 ELSE 8 END AS act,
            s.entry_page GLOB '*/page/[0-9][0-9]*' AS deep, s.entry_page = '/' AS home,
            CASE WHEN s.entry_page GLOB '/[12][09][0-9][0-9]/*' THEN substr(s.entry_page, 2, 4) END AS year,
            EXISTS (SELECT 1 FROM sessions s2 WHERE s2.site_id = s.site_id AND s2.visitor_id = s.visitor_id AND s2.started_at > s.started_at + 1800000) AS returned,
@@ -83,7 +84,7 @@ export async function botStudy(db: D1Database, from: number, to: number, domain?
            COUNT(*) AS n
          FROM sessions s JOIN visitors v ON v.site_id = s.site_id AND v.id = s.visitor_id
          WHERE s.site_id = ? AND s.started_at >= ? AND s.started_at < ? AND s.started_at - v.first_seen < 60000
-         GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17`,
+         GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18`,
       )
       .bind(site.id, site.id, from, to)
       .all();
