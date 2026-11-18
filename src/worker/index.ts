@@ -1,7 +1,6 @@
 import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { handleEvent } from './collect';
-import { humanFrame, humanResult } from './human';
 import { forgetSite, type AppEnv, type Site } from './env';
 import { ADMIN_ID, adminEmail, clearSession, currentUser, emailLogin, googleCallback, googleStart, isHosted, requireUser, setSession, signupOpen, siteAccessSql, siteRole, type SiteRole, type User } from './auth';
 import { billingWebhook, checkout, planInfo } from './billing';
@@ -38,9 +37,6 @@ app.use('*', async (c, next) => {
 
 app.use('/api/event', cors({ origin: '*', allowMethods: ['POST', 'OPTIONS'], maxAge: 86400 }));
 app.post('/api/event', handleEvent);
-// Invisible human check (Turnstile) in a hidden frame, once per browser. Measure-only for now.
-app.get('/api/human/frame', humanFrame);
-app.post('/api/human', humanResult);
 app.post('/api/webhooks/dodo/:siteId', handleDodoWebhook);
 app.post('/api/webhooks/stripe/:siteId', handleStripeWebhook);
 app.post('/api/webhooks/polar/:siteId', handlePolarWebhook);
@@ -583,7 +579,7 @@ app.delete('/api/sites/:id', async (c) => {
 app.get('/api/sites/:id/overview', async (c) => c.json(await overview(await makeCtx(c))));
 
 // Bot-check dimensions under evaluation: only admins and staff see them.
-const ADMIN_DIMS = new Set(['human', 'human_reason', 'signals', 'engaged']);
+const ADMIN_DIMS = new Set(['signals', 'engaged']);
 app.get('/api/sites/:id/breakdown', async (c) => {
   if (ADMIN_DIMS.has(c.req.query('dim') ?? '') && c.get('role') !== 'admin') return c.json({ error: 'Not available' }, 403);
   try {

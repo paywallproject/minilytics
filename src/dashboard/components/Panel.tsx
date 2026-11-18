@@ -8,24 +8,6 @@ import { useApi } from '../lib/useApi';
 import { BrowserIcon, ChannelIcon, DeviceIcon, Favicon, Flag, OSIcon, SourceIcon } from './Icons';
 import { Modal } from './Modal';
 
-/** Plain-English reason a Turnstile check ended as it did (codes: developers.cloudflare.com/turnstile/troubleshooting/client-side-errors). */
-function humanReason(code: string | null | undefined): string {
-  if (!code) return 'Not checked';
-  if (code === 'pass') return 'Passed';
-  if (code === 'passed before') return 'Passed on an earlier visit (last 30 days)';
-  if (code === 'blocked') return "Couldn't load Cloudflare's script (blocked)";
-  if (code === 'timeout') return 'Timed out (left the page, or very slow)';
-  if (code === 'unsupported') return 'Browser too old for the check';
-  if (code === 'render' || code === 'no token') return "Check couldn't start";
-  if (code === 'mismatch') return 'Token was for a different visit';
-  if (code === 'siteverify unreachable') return "Couldn't reach Cloudflare to confirm";
-  if (/^6\d{5}$/.test(code)) return `Failed: looks automated (${code})`;
-  if (/^3\d{5}$/.test(code)) return `Failed: browser checks didn't complete (${code})`;
-  if (/^1\d{5}$/.test(code)) return `Setup problem (${code})`;
-  if (/^2\d{5}$/.test(code)) return `Browser clock or cache problem (${code})`;
-  return code;
-}
-
 export interface TabDef {
   label: string;
   dim: string;
@@ -109,19 +91,6 @@ export function renderLabel(dim: string, row: Pick<BreakdownRow, 'label' | 'extr
         </>
       );
     }
-    case 'human': {
-      const v = l === null || l === undefined ? null : String(l);
-      const [mark, label, color] =
-        v === '1' ? ['✓', 'Passed', 'text-emerald-600'] : v === '0' ? ['✗', 'Failed', 'text-red-600'] : v === '-1' ? ['–', "Couldn't run", 'text-stone-400'] : ['○', 'Not checked', 'text-stone-400'];
-      return (
-        <>
-          <span className={`w-4 text-center font-semibold ${color}`}>{mark}</span>
-          {text(label)}
-        </>
-      );
-    }
-    case 'human_reason':
-      return text(humanReason(l));
     default:
       return text(l ?? <span className="text-stone-400">(none)</span>);
   }

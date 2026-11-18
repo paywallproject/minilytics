@@ -24,7 +24,6 @@ const SESSION_FILTERS = [
   'entry_page',
   'exit_page',
   'hostname',
-  'human',
 ] as const;
 
 export type Filters = Partial<Record<(typeof SESSION_FILTERS)[number] | 'page' | 'goal', string>>;
@@ -297,9 +296,6 @@ const SESSION_DIMS: Record<string, string> = {
   // Bot checks under evaluation (not shown in the dashboard).
   signals: "COALESCE(s.signals, 'none')",
   engaged: 's.engaged',
-  // Turnstile: '1' passed, '0' failed, '-1' couldn't run, NULL not checked. Admins only (see index.ts).
-  human: 'CAST(s.human AS TEXT)',
-  human_reason: 's.human_reason',
 };
 
 export interface BreakdownRow {

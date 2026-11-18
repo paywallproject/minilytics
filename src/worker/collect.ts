@@ -3,7 +3,6 @@ import { belongsTo, normalizePath, stripWww } from '../shared/paths';
 import { classify } from '../shared/sources';
 import { siteOwnerActive } from './auth';
 import { getSite, type AppEnv, type Site } from './env';
-import { HUMAN_PASS_MS } from './human';
 import { isOwnerVisit } from './owner';
 import { isHostingAsn } from './lib/datacenter';
 import { botSignals } from './lib/signals';
@@ -351,16 +350,12 @@ function newSession(
 
   return [
     db.prepare('INSERT OR IGNORE INTO visitors (site_id, id, first_seen) VALUES (?, ?, ?)').bind(site.id, body.vid, now),
-    // The tracker runs the human check once per browser every 30 days, so a browser that passed recently isn't
-    // checked again: its pass carries over to the new visit (reason 'passed before').
     db
       .prepare(
         `INSERT OR IGNORE INTO sessions (site_id, id, visitor_id, started_at, last_seen_at, pageviews, hostname, entry_page, exit_page,
           referrer, referrer_domain, source, channel, utm_source, utm_medium, utm_campaign, utm_term, utm_content, ref,
-          country, region, city, browser, os, device, lat, lon, signals, human, human_reason)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-           (SELECT 1 FROM visitors WHERE site_id = ? AND id = ? AND human_at > ?),
-           (SELECT 'passed before' FROM visitors WHERE site_id = ? AND id = ? AND human_at > ?))`,
+          country, region, city, browser, os, device, lat, lon, signals)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         site.id,
@@ -390,12 +385,6 @@ function newSession(
         geo.lat,
         geo.lon,
         signals,
-        site.id,
-        body.vid,
-        now - HUMAN_PASS_MS,
-        site.id,
-        body.vid,
-        now - HUMAN_PASS_MS,
       ),
     // Separate statement so concurrent first events (pageview + goal racing) never double count.
     ...(pageviews

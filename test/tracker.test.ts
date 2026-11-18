@@ -4,11 +4,7 @@ import { describe, expect, it } from 'vitest';
 const SRC = readFileSync(new URL('../public/js/script.js', import.meta.url), 'utf8');
 
 /** Runs the tracker in a tiny fake browser and returns what it sent plus a way to fire events. */
-function run(opts: { referrer?: string; search?: string; cookie?: string; attrs?: Record<string, string>; optIn?: boolean; storage?: Record<string, string> } = {}) {
-  const timers: (() => void)[] = [];
-  const frames: any[] = [];
-  const store: Record<string, string> = { ...opts.storage };
-  const session: Record<string, string> = {};
+function run(opts: { referrer?: string; search?: string; cookie?: string; attrs?: Record<string, string>; optIn?: boolean } = {}) {
   const sent: any[] = [];
   const listeners: Record<string, ((e: any) => void)[]> = {};
   let cookie = opts.cookie ?? '';
@@ -19,8 +15,6 @@ function run(opts: { referrer?: string; search?: string; cookie?: string; attrs?
     visibilityState: 'visible',
     readyState: 'complete',
     documentElement: {},
-    body: { appendChild: (f: any) => { f.parentNode = { removeChild() {} }; frames.push(f); } },
-    createElement: () => ({ style: {}, setAttribute() {} }),
     addEventListener() {},
     querySelectorAll: () => [],
     get cookie() { return cookie; },
@@ -37,18 +31,16 @@ function run(opts: { referrer?: string; search?: string; cookie?: string; attrs?
     navigator: { webdriver: false },
     screen: { width: 1440 },
     history: { pushState() {}, replaceState() {} },
-    sessionStorage: { getItem: (k: string) => session[k] ?? null, setItem: (k: string, v: string) => { session[k] = v; } },
     addEventListener(t: string, fn: any) { (listeners[t] ??= []).push(fn); },
     removeEventListener(t: string, fn: any) { listeners[t] = (listeners[t] ?? []).filter((f) => f !== fn); },
   };
   const fetch = (_u: string, o: any) => { sent.push(JSON.parse(o.body)); return Promise.resolve(); };
   new Function('window', 'document', 'fetch', 'setInterval', 'setTimeout', 'localStorage', 'URL', 'URLSearchParams', 'Intl', 'crypto', 'Blob', 'MutationObserver', 'screen',
     SRC,
-  )(window, document, fetch, () => 0, (fn: () => void) => { timers.push(fn); return 0; }, { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; }, removeItem() {} }, URL, URLSearchParams, Intl, globalThis.crypto, Blob, undefined, window.screen);
+  )(window, document, fetch, () => 0, () => 0, { getItem: () => null, setItem() {}, removeItem() {} }, URL, URLSearchParams, Intl, globalThis.crypto, Blob, undefined, window.screen);
   const fire = (t: string, trusted = true) => (listeners[t] ?? []).slice().forEach((f) => f({ isTrusted: trusted }));
   const api = (...a: any[]) => window.minilytics(...a);
-  const runTimers = () => timers.splice(0).forEach((fn) => fn());
-  return { sent, fire, api, frames, runTimers };
+  return { sent, fire, api };
 }
 
 describe('tracker: Direct visits wait for a sign of a person', () => {
@@ -77,23 +69,5 @@ describe('tracker: Direct visits wait for a sign of a person', () => {
     const t = run();
     t.api('goal', 'Signup');
     expect(t.sent.map((e) => e.t)).toEqual(['pageview', 'goal']);
-  });
-});
-
-describe('tracker: human check (Turnstile)', () => {
-  it('opens one hidden frame on the Minilytics domain, with only the site and visit ids in the #fragment', () => {
-    const t = run({ optIn: false });
-    t.runTimers();
-    expect(t.frames).toHaveLength(1);
-    const src = new URL(t.frames[0].src);
-    expect(src.origin + src.pathname).toBe('https://m.example/api/human/frame');
-    expect(src.search).toBe('');
-    expect([...new URLSearchParams(src.hash.slice(1)).keys()]).toEqual(['w', 'sid', 'vid']);
-    expect(t.frames[0].style.cssText).toContain('left:-9999px');
-  });
-  it('skips browsers that passed in the last 30 days', () => {
-    const t = run({ optIn: false, storage: { ml_h: String(Date.now() - 86_400_000) } });
-    t.runTimers();
-    expect(t.frames).toHaveLength(0);
   });
 });

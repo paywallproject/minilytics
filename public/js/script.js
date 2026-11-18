@@ -255,41 +255,6 @@
   d.addEventListener('click', onClick, true);
   d.addEventListener('auxclick', onClick, true);
 
-  // ---- human check: Cloudflare Turnstile (invisible), run once per browser every 30 days in a hidden frame on the
-  // Minilytics domain. Nothing is shown to the reader and nothing is ever blocked; the result is only recorded.
-  var appOrigin = new URL(script.src).origin;
-  function humanCheck() {
-    try {
-      if (Date.now() - (Number(localStorage.getItem('ml_h')) || 0) < 30 * 86400000) return;
-      if (sessionStorage.getItem('ml_hc')) return; // tried already in this tab
-      sessionStorage.setItem('ml_hc', '1');
-    } catch (e) { return; }
-    var id = ids();
-    var f = d.createElement('iframe');
-    f.src = appOrigin + '/api/human/frame#' + new URLSearchParams({ w: siteId, sid: id.sid, vid: id.vid }).toString();
-    f.title = 'Minilytics';
-    f.tabIndex = -1;
-    f.setAttribute('aria-hidden', 'true');
-    f.style.cssText = 'position:absolute;left:-9999px;top:0;width:1px;height:1px;border:0;opacity:0;pointer-events:none';
-    function cleanup() {
-      w.removeEventListener('message', onMessage);
-      if (f.parentNode) f.parentNode.removeChild(f);
-    }
-    function onMessage(e) {
-      if (e.source !== f.contentWindow || !e.data || e.data.ml !== 'human') return;
-      if (e.data.ok) try { localStorage.setItem('ml_h', String(Date.now())); } catch (x) {}
-      cleanup();
-    }
-    w.addEventListener('message', onMessage);
-    setTimeout(cleanup, 30000);
-    (d.body || d.documentElement).appendChild(f);
-  }
-  // Start right away (just after the first pageview is sent), so readers who leave within a few seconds still get
-  // checked. The frame is tiny and loads on its own, so it doesn't hold up the page.
-  function scheduleHumanCheck() {
-    setTimeout(humanCheck, 0);
-  }
-
   // ---- public API
   function api(cmd, a, b) {
     if (cmd === 'goal' || cmd === 'track') goal(a, b);
@@ -300,6 +265,5 @@
   w.minilytics = api;
 
   pageview();
-  scheduleHumanCheck();
   for (var q = 0; q < queued.length; q++) api.apply(null, queued[q]);
 })();
