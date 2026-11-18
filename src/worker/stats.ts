@@ -296,6 +296,7 @@ const SESSION_DIMS: Record<string, string> = {
   // Bot checks under evaluation (not shown in the dashboard).
   signals: "COALESCE(s.signals, 'none')",
   engaged: 's.engaged',
+  network: 's.network',
 };
 
 export interface BreakdownRow {

@@ -48,7 +48,7 @@ export async function handleEvent(c: Context<AppEnv>) {
   if (!body || !isId(body.w) || !TYPES.has(body.t) || !isId(body.vid) || !isId(body.sid)) return c.body(null, 400);
 
   const ua = c.req.header('user-agent') ?? '';
-  if (isBot(ua) || fromHostingNetwork(c) || isSpamReferrer(body.r)) return c.body(null, 202);
+  if (isBot(ua) || unrecognised(ua) || fromHostingNetwork(c) || isSpamReferrer(body.r)) return c.body(null, 202);
 
   const site = await getSite(c.env.DB, body.w);
   if (!site) return c.body(null, 404);
@@ -93,6 +93,15 @@ function fromHostingNetwork(c: Context<AppEnv>): boolean {
   return !isProxied(c) && isHostingAsn(cfOf(c)?.asn);
 }
 
+/**
+ * Every real browser names itself and its OS in the user agent. When we can recognise neither, it's a script or
+ * crawler with a made-up user agent that isBot doesn't know (e.g. 671 such "visitors" from Sydney on one site in a day).
+ */
+function unrecognised(ua: string): boolean {
+  const { browser, os } = parseUA(ua);
+  return browser === 'Other' && os === 'Other';
+}
+
 /** True when the event reached us through the site's own server rather than straight from the browser. */
 function isProxied(c: Context<AppEnv>): boolean {
   if (c.req.header('x-vercel-ip-country')) return true;
@@ -108,6 +117,8 @@ export interface Geo {
   city: string | null;
   lat: number | null;
   lon: number | null;
+  /** "AS<number> <owner>", or null when proxied. */
+  network: string | null;
 }
 
 /** City-level coordinates, rounded to 2 decimals (~1 km) so no precise location is ever stored. */
@@ -136,6 +147,7 @@ function geoOf(c: Context<AppEnv>): Geo {
       city: h('x-vercel-ip-city'),
       lat: coord(h('x-vercel-ip-latitude'), 90),
       lon: coord(h('x-vercel-ip-longitude'), 180),
+      network: null,
     };
   }
   const cf = (c.req.raw as { cf?: IncomingRequestCfProperties }).cf;
@@ -145,6 +157,7 @@ function geoOf(c: Context<AppEnv>): Geo {
     city: (cf?.city as string) ?? null,
     lat: coord(cf?.latitude, 90),
     lon: coord(cf?.longitude, 180),
+    network: !isProxied(c) && typeof cf?.asn === 'number' ? `AS${cf.asn} ${String(cf.asOrganization ?? '')}`.trim().slice(0, 100) : null,
   };
 }
 
@@ -354,8 +367,8 @@ function newSession(
       .prepare(
         `INSERT OR IGNORE INTO sessions (site_id, id, visitor_id, started_at, last_seen_at, pageviews, hostname, entry_page, exit_page,
           referrer, referrer_domain, source, channel, utm_source, utm_medium, utm_campaign, utm_term, utm_content, ref,
-          country, region, city, browser, os, device, lat, lon, signals)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          country, region, city, browser, os, device, lat, lon, signals, network)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         site.id,
@@ -385,6 +398,7 @@ function newSession(
         geo.lat,
         geo.lon,
         signals,
+        geo.network,
       ),
     // Separate statement so concurrent first events (pageview + goal racing) never double count.
     ...(pageviews
