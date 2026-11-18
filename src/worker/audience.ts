@@ -53,7 +53,7 @@ export async function refreshSomeAudiences(db: D1Database, perRun = 3) {
   for (const s of due.results) await refreshAudience(db, s.id);
 }
 
-type Audience = { readers: Map<string, number>; total: number; top: string | null; topShare: number };
+type Audience = { readers: Map<string, number>; total: number; top: string | null; topShare: number; interacted: number };
 const cache = new Map<string, { at: number; aud: Audience }>();
 
 async function audienceOf(db: D1Database, siteId: string): Promise<Audience> {
@@ -68,7 +68,7 @@ async function audienceOf(db: D1Database, siteId: string): Promise<Audience> {
     all += x.sessions;
     if (x.sessions > topN) (top = x.country), (topN = x.sessions);
   }
-  const aud = { readers, total, top, topShare: all ? topN / all : 0 };
+  const aud = { readers, total, top, topShare: all ? topN / all : 0, interacted: all };
   cache.set(siteId, { at: Date.now(), aud });
   return aud;
 }
@@ -83,6 +83,7 @@ export async function outsideAudience(db: D1Database, siteId: string, country: s
   if (!country) return false;
   const a = await audienceOf(db, siteId);
   if (a.total >= MIN_READERS) return (a.readers.get(country) ?? 0) < Math.max(2, 0.01 * a.total);
-  if (a.top && a.topShare >= 0.5) return country !== a.top;
+  // Too little to go on (e.g. a docs site with a handful of visits): don't judge by country at all.
+  if (a.top && a.interacted >= 20 && a.topShare >= 0.5) return country !== a.top;
   return false;
 }
