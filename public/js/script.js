@@ -128,17 +128,6 @@
     setTimeout(function () { if (d.visibilityState === 'visible') flushTime(false); }, t);
   });
 
-  // On a new visit's first page, run Fingerprint's open-source bot detector (BotD, served from the Minilytics domain,
-  // no calls to Fingerprint) and report its verdict. Measuring only for now: it doesn't change what's counted.
-  if (newSession) setTimeout(function () {
-    try {
-      import(new URL(script.src).origin + '/js/botd.js')
-        .then(function (m) { return m.load({ monitoring: false }); })
-        .then(function (b) { return b.detect(); })
-        .then(function (r) { send('botd', { p: { bot: !!r.bot, k: r.bot ? r.botKind : undefined } }, true); })
-        .catch(noop);
-    } catch (e) {}
-  }, 1500);
 
   // ---- pageviews (including single-page-app navigation)
   var lastPage = null, firstView = true;
