@@ -9,9 +9,9 @@
  *  - the first page is deep in an archive (/page/1192, /category/x/page/545), which people only reach by clicking
  *    through from page 1, i.e. not as a brand-new Direct visit.
  *  - and on a computer, any brand-new Direct visit (see below).
- * Such a visit is held, not dropped: if the reader interacts, logs in, clicks out or keeps the page visible for
- * 15 seconds, it's counted as normal. A
- * traveller or VPN user who never touches the page goes uncounted, which is the accepted cost.
+ * Such a visit is held, not dropped: if the reader logs in, clicks out, interacts and stays a few
+ * seconds, or keeps the page visible for 15 seconds, it's counted as normal. Someone who leaves within seconds
+ * without touching anything goes uncounted, which is the accepted cost.
  */
 
 /** Holding only applies to a brand-new Direct visit (no referrer from elsewhere, no campaign tags). */
@@ -56,5 +56,18 @@ export const RELEASE_VISIBLE_MS = 15_000;
 /** Bot signs strong enough that waiting on the page doesn't release the visit (only interaction or login do). */
 export const NO_TIME_RELEASE = /headless/;
 
-/** Events that prove a person is there. A goal doesn't: sites fire some on page load (e.g. "paywall shown"). */
-export const RELEASES = new Set(['engage', 'identify', 'outbound']);
+/**
+ * An interaction counts once the page has also been on screen this long. The enewspf crawler sends a scripted
+ * mouse movement and leaves within a second; a person who moves the mouse is reading, so stays longer.
+ */
+export const RELEASE_ENGAGED_MS = 3_000;
+
+/** Events that prove a person is there on their own. A goal doesn't (sites fire some on page load, e.g. "paywall
+ * shown"), and neither does an interaction by itself (see RELEASE_ENGAGED_MS). */
+export const RELEASES = new Set(['identify', 'outbound']);
+
+/** Should a held visit be counted now? */
+export function releasedBy(held: { visible: number; engaged: number; signals: string | null }): boolean {
+  if (held.engaged && held.visible >= RELEASE_ENGAGED_MS) return true;
+  return held.visible >= RELEASE_VISIBLE_MS && !NO_TIME_RELEASE.test(held.signals ?? '');
+}

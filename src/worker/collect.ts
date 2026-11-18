@@ -6,7 +6,7 @@ import { getSite, type AppEnv, type Site } from './env';
 import { isOwnerVisit } from './owner';
 import { isHostingAsn } from './lib/datacenter';
 import { botSignals } from './lib/signals';
-import { HOLD_MS, holdReason, NO_TIME_RELEASE, RELEASE_VISIBLE_MS, RELEASES } from './lib/hold';
+import { HOLD_MS, holdReason, releasedBy, RELEASES } from './lib/hold';
 import { isBot, isSpamReferrer, parseUA } from './lib/ua';
 import { creditedSessionSql, dodoProductOfLink, firstTouchSessionSql, learnDodoProducts } from './payments';
 
@@ -112,20 +112,29 @@ export async function handleEvent(c: Context<AppEnv>) {
       .run();
     if (ses.meta.changes) return c.body(null, 202);
     const held = await db
-      .prepare('UPDATE held_visits SET visible = visible + ? WHERE site_id = ? AND session_id = ? RETURNING ts, body, signals, queued, visible')
+      .prepare('UPDATE held_visits SET visible = visible + ? WHERE site_id = ? AND session_id = ? RETURNING ts, body, signals, queued, visible, engaged')
       .bind(ms, site.id, body.sid)
-      .first<HeldRow & { visible: number }>();
-    if (held && held.visible >= RELEASE_VISIBLE_MS && !NO_TIME_RELEASE.test(held.signals ?? '')) {
+      .first<HeldRow & { visible: number; engaged: number }>();
+    if (held && releasedBy(held)) {
       await release(db, site, held, ua, geoOf(c));
+      if (held.engaged) await ingest(db, site, { ...body, t: 'engage' }, url, ua, geoOf(c), now);
       await ingest(db, site, { ...body, d: held.visible }, url, ua, geoOf(c), now);
     }
     return c.body(null, 202);
   } else {
     const held = await db
-      .prepare('SELECT ts, body, signals, queued FROM held_visits WHERE site_id = ? AND session_id = ?')
+      .prepare('SELECT ts, body, signals, queued, visible FROM held_visits WHERE site_id = ? AND session_id = ?')
       .bind(site.id, body.sid)
-      .first<HeldRow>();
-    if (held) {
+      .first<HeldRow & { visible: number }>();
+    if (held && body.t === 'engage') {
+      // Remember it: it counts together with a few seconds on screen (a later ping), unless those are already there.
+      if (!releasedBy({ ...held, engaged: 1 })) {
+        await db.prepare('UPDATE held_visits SET engaged = 1 WHERE site_id = ? AND session_id = ?').bind(site.id, body.sid).run();
+        return c.body(null, 202);
+      }
+      await release(db, site, held, ua, geoOf(c));
+      await ingest(db, site, { ...body, t: 'ping', d: held.visible }, url, ua, geoOf(c), now);
+    } else if (held) {
       const queued = (held.queued ? JSON.parse(held.queued) : []) as { ts: number; body: Payload }[];
       if (!RELEASES.has(body.t)) {
         // e.g. "paywall shown" fired on load: not a sign of a person. Keep it in case the visit is released.

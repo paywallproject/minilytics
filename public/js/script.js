@@ -119,6 +119,10 @@
   setInterval(function () {
     if (d.visibilityState === 'visible' && pings < 30) { pings++; flushTime(false); }
   }, 60000);
+  // Early reports at 3.5s and 15.5s too: the server holds some new visits until there's a sign of a person (a few
+  // seconds on screen after an interaction, or 15s), so they're counted then rather than at the first minute.
+  setTimeout(function () { if (d.visibilityState === 'visible') flushTime(false); }, 3500);
+  setTimeout(function () { if (d.visibilityState === 'visible') flushTime(false); }, 15500);
 
   // ---- pageviews (including single-page-app navigation)
   var lastPage = null, firstView = true;
