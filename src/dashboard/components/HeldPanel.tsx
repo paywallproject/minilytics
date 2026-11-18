@@ -7,6 +7,7 @@ type Row = { label: string | null; n: number };
 interface HeldReport {
   totals: { reason: string; counted: number; n: number }[];
   cameBack: number;
+  botd: { counted: number; label: string; n: number }[];
   releasedHow: Row[];
   notCounted: Record<'network' | 'city' | 'os' | 'page' | 'visible' | 'engaged', Row[]>;
   recent: {
@@ -76,6 +77,8 @@ export function HeldPanel() {
         {list('Counted after all, because', data.releasedHow)}
         {list('Time on screen (not counted)', data.notCounted.visible)}
         {list('Interaction (not counted)', data.notCounted.engaged)}
+        {list('Bot detector (not counted)', data.botd.filter((b) => !b.counted).map((b) => ({ label: b.label, n: b.n })))}
+        {list('Bot detector (counted after all)', data.botd.filter((b) => b.counted).map((b) => ({ label: b.label, n: b.n })))}
         {list('Network', data.notCounted.network)}
         {list('Place', data.notCounted.city)}
         {list('OS / browser / device', data.notCounted.os)}

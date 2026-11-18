@@ -12,7 +12,7 @@ export async function heldReport(ctx: Ctx) {
     db
       .prepare(`SELECT ${expr} AS label, COUNT(*) AS n FROM held_visits WHERE ${where} AND released_at IS NULL GROUP BY 1 ORDER BY n DESC LIMIT 15`)
       .bind(...bind);
-  const [totals, network, city, os, page, visible, engaged, recent, releasedHow, cameBack] = await db.batch([
+  const [totals, network, city, os, page, visible, engaged, recent, releasedHow, cameBack, botd] = await db.batch([
     db
       .prepare(`SELECT reason, released_at IS NOT NULL AS counted, COUNT(*) AS n FROM held_visits WHERE ${where} GROUP BY 1, 2 ORDER BY n DESC`)
       .bind(...bind),
@@ -44,8 +44,16 @@ export async function heldReport(ctx: Ctx) {
            AND EXISTS (SELECT 1 FROM sessions s WHERE s.site_id = h.site_id AND s.visitor_id = json_extract(h.body, '$.vid') AND s.started_at > h.ts)`,
       )
       .bind(...bind),
+    // The open-source bot detector's verdict, for held visits counted after all and not counted.
+    db
+      .prepare(
+        `SELECT released_at IS NOT NULL AS counted, COALESCE(botd, 'not run') AS label, COUNT(*) AS n FROM held_visits WHERE ${where}
+         GROUP BY 1, 2 ORDER BY n DESC`,
+      )
+      .bind(...bind),
   ]);
   return {
+    botd: botd.results,
     totals: totals.results,
     cameBack: (cameBack.results[0] as { n: number } | undefined)?.n ?? 0,
     releasedHow: releasedHow.results,

@@ -11,7 +11,7 @@ import { inHomeRegion, outsideAudience } from './audience';
 import { isBot, isSpamReferrer, parseUA } from './lib/ua';
 import { creditedSessionSql, dodoProductOfLink, firstTouchSessionSql, learnDodoProducts } from './payments';
 
-const TYPES = new Set(['pageview', 'goal', 'outbound', 'ping', 'identify', 'engage']);
+const TYPES = new Set(['pageview', 'goal', 'outbound', 'ping', 'identify', 'engage', 'botd']);
 const MAX_PING_MS = 10 * 60_000;
 
 interface Payload {
@@ -83,6 +83,18 @@ export async function handleEvent(c: Context<AppEnv>) {
       : [];
   if (body.t === 'pageview' && body.v === undefined) signals.push('old_script');
   const db = c.env.DB;
+
+  // Fingerprint's open-source bot detector (BotD) ran in the browser: record its verdict on the visit, whether it was
+  // counted or held. Measuring only: it doesn't change what's counted.
+  if (body.t === 'botd') {
+    const p = body.p ?? {};
+    const verdict = p.bot ? (typeof p.k === 'string' && /^[a-z_]{2,30}$/.test(p.k) ? p.k : 'bot') : 'human';
+    await db.batch([
+      db.prepare('UPDATE sessions SET botd = ? WHERE site_id = ? AND id = ?').bind(verdict, site.id, body.sid),
+      db.prepare('UPDATE held_visits SET botd = ? WHERE site_id = ? AND session_id = ?').bind(verdict, site.id, body.sid),
+    ]);
+    return c.body(null, 202);
+  }
 
   // The hold (lib/hold.ts): a brand-new visitor's first visit waits for a sign that someone saw the page.
   const engage = engageOf(body);
@@ -271,6 +283,11 @@ async function release(db: D1Database, site: Site, held: HeldRow, ua: string, ge
     .run();
   if (!upd.meta.changes) return false;
   await ingest(db, site, first, new URL(first.u), ua, geo, held.ts, held.signals);
+  // Carry the bot detector's verdict over, if it came while the visit was held.
+  await db
+    .prepare('UPDATE sessions SET botd = (SELECT botd FROM held_visits WHERE site_id = ? AND session_id = ?) WHERE site_id = ? AND id = ? AND botd IS NULL')
+    .bind(site.id, first.sid, site.id, first.sid)
+    .run();
   for (const q of queuedOf(held.queued)) await ingest(db, site, q.body, new URL(q.body.u), ua, geo, q.ts);
   if (held.engaged) {
     await ingest(db, site, { ...first, t: 'engage', p: { k: held.engage_kind, ms: held.engage_ms } }, new URL(first.u), ua, geo, now);
