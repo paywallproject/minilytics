@@ -20,7 +20,11 @@ export async function refreshAudience(db: D1Database, siteId: string, now = Date
          GROUP BY s.country`,
       )
       .bind(siteId, since),
-    db.prepare('SELECT country, COUNT(*) AS n FROM sessions WHERE site_id = ? AND started_at > ? AND country IS NOT NULL GROUP BY country').bind(siteId, since),
+    // Visits that interacted (bots rarely do), for the fallback when a site has few real readers yet: raw visit
+    // counts would let a bot wave decide (enewspf: 2,559 from Sydney against 4,786 from the US).
+    db
+      .prepare('SELECT country, COUNT(*) AS n FROM sessions WHERE site_id = ? AND started_at > ? AND country IS NOT NULL AND engaged = 1 GROUP BY country')
+      .bind(siteId, since),
   ]);
   const rows = new Map<string, { readers: number; sessions: number }>();
   for (const r of readers.results as { country: string; n: number }[]) rows.set(r.country, { readers: r.n, sessions: 0 });
@@ -71,7 +75,8 @@ async function audienceOf(db: D1Database, siteId: string): Promise<Audience> {
 
 /**
  * Is a visitor from this country outside the site's audience? With enough real readers: their country has fewer
- * than max(2, 1%) of them. Otherwise, when one country has most of the site's visits, anywhere else. Unknown: no.
+ * than max(2, 1%) of them. Otherwise, when one country has most of the site's visits that interacted, anywhere else.
+ * Unknown: no.
  * Measured: 1.0% of real readers' first visits fall outside and don't then interact and stay 15s; 11% of one-time.
  */
 export async function outsideAudience(db: D1Database, siteId: string, country: string | null): Promise<boolean> {
