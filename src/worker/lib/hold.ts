@@ -14,7 +14,8 @@
  *    Chrome (0.3% vs 7.3%), no client hints (0.1% vs 2.8%), Linux on a computer (0.6% vs 3.5%), first page deep in
  *    an archive (0% vs 4.3%). Counted after an interaction plus 3s on screen, or 15s on screen.
  *  - outside: from a country the site's real readers don't come from (audience.ts), any device. Counted after an
- *    interaction plus 15s on screen, or a login. 1.0% of real readers' first visits vs 11% of one-time.
+ *    interaction within 15s of loading plus 15s on screen, or a login. 1.0% of real readers' first visits vs 11%
+ *    of one-time.
  *  - light: any other new visit on a computer. From outside the site's home region (state), time on the page alone
  *    doesn't count it (audience.ts inHomeRegion). Counted after any interaction, any time on screen (the tracker
  *    reports after about a second), a second page, a login or a click out.
@@ -65,12 +66,19 @@ export const STRICT_ENGAGED_MS = 3_000;
 export const STRICT_VISIBLE_MS = 15_000;
 
 /** Should a held visit be counted now, given what it has done so far? */
-export function releasedBy(held: { reason: string; visible: number; engaged: number }): boolean {
+/**
+ * Outside the audience, the first interaction must also come within this long of the page loading. The Nanjing
+ * crawler moves the mouse 24-39s in (6 of 6 on enewspf after 15s), while 86% of real readers on computers touch the
+ * page within 15s (salemreporter), so this costs about 0.1% of real readers' first visits.
+ */
+export const OUTSIDE_FIRST_TOUCH_MS = 15_000;
+
+export function releasedBy(held: { reason: string; visible: number; engaged: number; engage_ms?: number | null }): boolean {
   switch (tierOf(held.reason)) {
     case 'automated':
       return false;
     case 'outside':
-      return !!held.engaged && held.visible >= STRICT_VISIBLE_MS;
+      return !!held.engaged && held.visible >= STRICT_VISIBLE_MS && (held.engage_ms == null || held.engage_ms <= OUTSIDE_FIRST_TOUCH_MS);
     case 'strict':
       return (!!held.engaged && held.visible >= STRICT_ENGAGED_MS) || held.visible >= STRICT_VISIBLE_MS;
     case 'light':
