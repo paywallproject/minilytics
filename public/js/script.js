@@ -84,8 +84,13 @@
     } catch (e) { return href; }
   }
   function send(type, extra, beacon) {
-    // Anything the visitor does (a goal, a click out, logging in) proves the held pageview is real; send it first.
-    if (held && type !== 'ping' && extra !== held) release();
+    // While a pageview is held, other events wait with it: a goal can fire on its own when the page loads (the
+    // PaywallProject plugin reports "paywall shown" on every article, bots included), so it isn't a sign of a
+    // person. Logging in is: that sends everything. Clicks get here after the pointerdown that already released.
+    if (held && type !== 'ping') {
+      if (type !== 'identify') { if (queued.length < 20) queued.push([type, extra, beacon]); return; }
+      release();
+    }
     var id = ids();
     var body = { w: siteId, t: type, u: cleanUrl(loc.href), vid: id.vid, sid: id.sid, sw: w.screen ? screen.width : 0, v: 2 };
     for (var k in extra) if (extra[k] !== undefined) body[k] = extra[k];
@@ -139,11 +144,13 @@
       return !!h && h !== loc.hostname && !(domain && (h === domain || h.slice(-domain.length - 1) === '.' + domain));
     } catch (e) { return false; }
   }
-  var held = null;
+  var held = null, queued = [];
   function release() {
-    var data = held;
+    var data = held, q = queued;
     held = null;
+    queued = [];
     if (data) send('pageview', data);
+    for (var i = 0; i < q.length; i++) send(q[i][0], q[i][1], q[i][2]);
   }
   function timeZone() {
     try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return undefined; }

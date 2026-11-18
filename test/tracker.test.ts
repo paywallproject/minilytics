@@ -65,9 +65,18 @@ describe('tracker: Direct visits wait for a sign of a person', () => {
     t.fire('scroll');
     expect(t.sent.map((e) => e.t)).toEqual(['pageview', 'engage']);
   });
-  it('sends the held pageview before a goal', () => {
+  it('keeps goals with the held pageview until a sign of a person (a goal can fire on page load)', () => {
     const t = run();
-    t.api('goal', 'Signup');
-    expect(t.sent.map((e) => e.t)).toEqual(['pageview', 'goal']);
+    t.api('goal', 'paywall_shown_free');
+    expect(t.sent).toEqual([]);
+    t.fire('scroll');
+    expect(t.sent.map((e) => e.t)).toEqual(['pageview', 'goal', 'engage']);
+    expect(t.sent[1].n ?? t.sent[1].name ?? JSON.stringify(t.sent[1])).toContain('paywall_shown_free');
+  });
+  it('sends the held pageview and anything waiting when the reader logs in', () => {
+    const t = run();
+    t.api('goal', 'paywall_shown_free');
+    t.api('identify', { user_id: '7' });
+    expect(t.sent.map((e) => e.t)).toEqual(['pageview', 'goal', 'identify']);
   });
 });
