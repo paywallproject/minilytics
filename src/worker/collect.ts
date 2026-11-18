@@ -112,8 +112,12 @@ export async function handleEvent(c: Context<AppEnv>) {
     const open = hv.results[0] as HeldRow | undefined;
     if (open && open.reason !== EARLY) {
       // A further page in a held visit. A light hold counts it (people click through, these crawlers load one page);
-      // otherwise it's still held.
-      if (!releasedByPage(open.reason)) return c.body(null, 202);
+      // otherwise it's still held, and the page is kept so it's recorded if the visit is counted later (a reader's
+      // second page can arrive just before the report from the first page that counts the visit).
+      if (!releasedByPage(open.reason)) {
+        await queueGoal(db, site, body, now, open.queued);
+        return c.body(null, 202);
+      }
       await release(db, site, open, ua, geoOf(c), now);
       await ingest(db, site, body, url, ua, geoOf(c), now, signals.join(',') || null);
       return c.body(null, 202);
@@ -255,6 +259,7 @@ interface HeldRow {
 
 const queuedOf = (q: string | null) => (q ? JSON.parse(q) : []) as { ts: number; body: Payload }[];
 
+/** Keeps an event (a goal, or a further page) with a held visit, to record if it's counted. */
 async function queueGoal(db: D1Database, site: Site, body: Payload, now: number, queued: string | null) {
   const q = queuedOf(queued);
   if (q.length >= 10) return false;

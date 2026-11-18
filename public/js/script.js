@@ -108,13 +108,18 @@
 
   // ---- engaged time (only while the tab is visible)
   var visibleSince = d.visibilityState === 'visible' ? Date.now() : 0;
-  var pending = 0, pings = 0;
+  var pending = 0, pings = 0, shown = 0;
   function flushTime(beacon) {
-    if (visibleSince) { pending += Date.now() - visibleSince; visibleSince = d.visibilityState === 'visible' ? Date.now() : 0; }
+    if (visibleSince) {
+      var dt = Date.now() - visibleSince;
+      pending += dt;
+      shown += dt;
+      visibleSince = d.visibilityState === 'visible' ? Date.now() : 0;
+    }
     if (pending >= 1000 && !held) { send('ping', { d: Math.round(pending) }, beacon); pending = 0; }
   }
   d.addEventListener('visibilitychange', function () {
-    if (d.visibilityState === 'visible') visibleSince = Date.now();
+    if (d.visibilityState === 'visible') { visibleSince = Date.now(); earlyAgain(); }
     else flushTime(true);
   });
   w.addEventListener('pagehide', function () { sendEngage(); flushTime(true); });
@@ -124,9 +129,13 @@
   // On the first page of a new visit, also report time early (at about 1s, 3.5s and 15.5s on screen): the server
   // holds some new visits until there's a sign someone saw the page, and this counts them at once, without relying
   // on the report sent when the page closes (which phones often drop).
-  if (newSession) [1200, 3500, 15500].forEach(function (t) {
-    setTimeout(function () { if (d.visibilityState === 'visible') flushTime(false); }, t);
-  });
+  // The same on the other pages of a visit's first few minutes (the server may still be holding the visit), and
+  // again once the page has been on screen 15.5s in total when the reader switched tabs in between.
+  if (newSession) writeCookie('ml_y', '1', 300);
+  var early = newSession || !!readCookie('ml_y');
+  function earlyFlush() { if (d.visibilityState === 'visible') flushTime(false); }
+  function earlyAgain() { if (early && shown < 15500) setTimeout(earlyFlush, 15500 - shown + 100); }
+  if (early) [1200, 3500, 15500].forEach(function (t) { setTimeout(earlyFlush, t); });
 
 
   // ---- pageviews (including single-page-app navigation)
