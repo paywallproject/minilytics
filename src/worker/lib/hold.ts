@@ -16,8 +16,9 @@
  *  - outside: from a country the site's real readers don't come from (audience.ts), any device. Counted after an
  *    interaction within 15s of loading plus 15s on screen, or a login. 1.0% of real readers' first visits vs 11%
  *    of one-time.
- *  - light: any other new visit on a computer. From outside the site's home region (state), time on the page alone
- *    doesn't count it (audience.ts inHomeRegion). Counted after any interaction, any time on screen (the tracker
+ *  - light: any other new visit on a computer. Inside the site's home region (state, audience.ts inHomeRegion): any
+ *    interaction or time on screen. Outside it: an interaction plus 15s on screen. Either: a second page, a login or
+ *    a click out. Counted after any interaction, any time on screen (the tracker
  *    reports after about a second), a second page, a login or a click out.
  * Together: 2.9% of real readers' first visits not counted (mostly visits never on screen; they're counted when
  * they come back), and 34% of one-time visits. Phones without a strict sign aren't held yet: the old tracker didn't
@@ -82,9 +83,13 @@ export function releasedBy(held: { reason: string; visible: number; engaged: num
     case 'strict':
       return (!!held.engaged && held.visible >= STRICT_ENGAGED_MS) || held.visible >= STRICT_VISIBLE_MS;
     case 'light':
-      // From outside the site's home region, time alone isn't enough: crawlers on home connections across the
-      // country sit on pages without touching them, while a local paper's readers are local.
-      return !!held.engaged || (held.visible > 0 && held.reason !== 'new_desktop_far');
+      // From outside the site's home region, time alone isn't enough (crawlers on home connections across the
+      // country sit on pages without touching them), and neither is one touch: the enewspf crawler sends one
+      // scripted mouse move 6-9s in and leaves seconds later. So it takes an interaction plus 15s on screen (or a
+      // second page, a login, a click out). Scored: 1 more of 1,310 logged-in readers' first visits, 46 more of 573
+      // one-time ones. Inside the region, any touch or any time on screen.
+      if (held.reason === 'new_desktop_far') return !!held.engaged && held.visible >= STRICT_VISIBLE_MS;
+      return !!held.engaged || held.visible > 0;
   }
 }
 

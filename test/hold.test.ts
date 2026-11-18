@@ -33,10 +33,11 @@ describe('the hold: what counts a held visit', () => {
     expect(h('new_desktop', 1200)).toBe(true);
     expect(releasedByPage('new_desktop')).toBe(true);
   });
-  it('light, outside the home region: an interaction or a second page, not time alone', () => {
+  it('light, outside the home region: an interaction plus 15s, or a second page; not time or a touch alone', () => {
     expect(holdReason({ url: new URL('https://news.example/story'), signals: [], device: 'Desktop', os: 'Windows', far: true })).toBe('new_desktop_far');
     expect(h('new_desktop_far', 74000)).toBe(false); // sat on the page 1m14s without touching it
-    expect(h('new_desktop_far', 0, 1)).toBe(true);
+    expect(h('new_desktop_far', 3500, 1)).toBe(false); // one scripted mouse move 9s in, gone at 3.5s on screen
+    expect(h('new_desktop_far', 15500, 1)).toBe(true);
     expect(releasedByPage('new_desktop_far')).toBe(true);
   });
   it('strict: an interaction plus 3s on screen, or 15s on screen', () => {
