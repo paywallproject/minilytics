@@ -6,7 +6,7 @@ import { getSite, type AppEnv, type Site } from './env';
 import { isOwnerVisit } from './owner';
 import { isHostingAsn } from './lib/datacenter';
 import { botSignals } from './lib/signals';
-import { HOLD_MS, holdReason, RELEASES } from './lib/hold';
+import { HOLD_MS, holdReason, RELEASE_VISIBLE_MS, RELEASES } from './lib/hold';
 import { isBot, isSpamReferrer, parseUA } from './lib/ua';
 import { creditedSessionSql, dodoProductOfLink, firstTouchSessionSql, learnDodoProducts } from './payments';
 
@@ -103,11 +103,28 @@ export async function handleEvent(c: Context<AppEnv>) {
       // released it on the way): still a bot.
       return c.body(null, 202);
     }
-  } else if (body.t !== 'ping') {
+  } else if (body.t === 'ping') {
+    // Visible time on a held page: a reader who stays on it (even without touching anything) is released.
+    const ms = Math.max(0, Math.min(MAX_PING_MS, Math.round(Number(body.d) || 0)));
+    const ses = await db
+      .prepare('UPDATE sessions SET duration = duration + ?, last_seen_at = ? WHERE site_id = ? AND id = ?')
+      .bind(ms, now, site.id, body.sid)
+      .run();
+    if (ses.meta.changes) return c.body(null, 202);
+    const held = await db
+      .prepare('UPDATE held_visits SET visible = visible + ? WHERE site_id = ? AND session_id = ? RETURNING ts, body, signals, queued, visible')
+      .bind(ms, site.id, body.sid)
+      .first<HeldRow & { visible: number }>();
+    if (held && held.visible >= RELEASE_VISIBLE_MS) {
+      await release(db, site, held, ua, geoOf(c));
+      await ingest(db, site, { ...body, d: held.visible }, url, ua, geoOf(c), now);
+    }
+    return c.body(null, 202);
+  } else {
     const held = await db
       .prepare('SELECT ts, body, signals, queued FROM held_visits WHERE site_id = ? AND session_id = ?')
       .bind(site.id, body.sid)
-      .first<{ ts: number; body: string; signals: string | null; queued: string | null }>();
+      .first<HeldRow>();
     if (held) {
       const queued = (held.queued ? JSON.parse(held.queued) : []) as { ts: number; body: Payload }[];
       if (!RELEASES.has(body.t)) {
@@ -122,16 +139,31 @@ export async function handleEvent(c: Context<AppEnv>) {
         return c.body(null, 202);
       }
       // A person after all: record the held pageview and goals as they happened, then this event.
-      await db.prepare('DELETE FROM held_visits WHERE site_id = ? AND session_id = ?').bind(site.id, body.sid).run();
-      const geo = geoOf(c);
-      const first = JSON.parse(held.body) as Payload;
-      await ingest(db, site, first, new URL(first.u), ua, geo, held.ts, held.signals);
-      for (const q of queued) await ingest(db, site, q.body, new URL(q.body.u), ua, geo, q.ts);
+      await release(db, site, held, ua, geoOf(c));
     }
   }
 
   await ingest(db, site, body, url, ua, geoOf(c), now, signals.join(',') || null);
   return c.body(null, 202);
+}
+
+interface HeldRow {
+  ts: number;
+  body: string;
+  signals: string | null;
+  queued: string | null;
+}
+
+/** A held visit turned out to be a person: record its pageview and any goals it fired, as they happened. */
+async function release(db: D1Database, site: Site, held: HeldRow, ua: string, geo: Geo) {
+  const sid = (JSON.parse(held.body) as Payload).sid;
+  // Only one event may release it (two can arrive together): whoever deletes the row records the visit.
+  const del = await db.prepare('DELETE FROM held_visits WHERE site_id = ? AND session_id = ?').bind(site.id, sid).run();
+  if (!del.meta.changes) return;
+  const first = JSON.parse(held.body) as Payload;
+  await ingest(db, site, first, new URL(first.u), ua, geo, held.ts, held.signals);
+  const queued = (held.queued ? JSON.parse(held.queued) : []) as { ts: number; body: Payload }[];
+  for (const q of queued) await ingest(db, site, q.body, new URL(q.body.u), ua, geo, q.ts);
 }
 
 /**

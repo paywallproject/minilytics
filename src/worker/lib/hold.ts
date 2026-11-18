@@ -8,7 +8,8 @@
  *    1-5% of visits from search and none of 72 Direct visits by paying readers;
  *  - the first page is deep in an archive (/page/1192, /category/x/page/545), which people only reach by clicking
  *    through from page 1, i.e. not as a brand-new Direct visit.
- * Such a visit is held, not dropped: if the reader interacts, logs in or clicks out, it's counted as normal. A
+ * Such a visit is held, not dropped: if the reader interacts, logs in, clicks out or keeps the page visible for
+ * 15 seconds, it's counted as normal. A
  * traveller or VPN user who never touches the page goes uncounted, which is the accepted cost.
  */
 
@@ -33,6 +34,12 @@ export function holdReason(input: { url: URL; referrer: string | null | undefine
 
 /** How long a held visit waits for a sign of a person. */
 export const HOLD_MS = 3 * 3_600_000;
+
+/**
+ * Staying on the page also counts: 94% of the proxy crawler left within a second, while 80% of paying readers who
+ * never touched the page stayed 15s or more (a traveller or VPN reader who just reads is still counted).
+ */
+export const RELEASE_VISIBLE_MS = 15_000;
 
 /** Events that prove a person is there. A goal doesn't: sites fire some on page load (e.g. "paywall shown"). */
 export const RELEASES = new Set(['engage', 'identify', 'outbound']);
