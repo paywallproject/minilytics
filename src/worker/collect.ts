@@ -6,6 +6,7 @@ import { getSite, type AppEnv, type Site } from './env';
 import { isOwnerVisit } from './owner';
 import { isHostingAsn } from './lib/datacenter';
 import { botSignals } from './lib/signals';
+import { HOLD_MS, holdReason, RELEASES } from './lib/hold';
 import { isBot, isSpamReferrer, parseUA } from './lib/ua';
 import { creditedSessionSql, dodoProductOfLink, firstTouchSessionSql, learnDodoProducts } from './payments';
 
@@ -80,7 +81,56 @@ export async function handleEvent(c: Context<AppEnv>) {
         })
       : [];
   if (body.t === 'pageview' && body.v === undefined) signals.push('old_script');
-  await ingest(c.env.DB, site, body, url, ua, geoOf(c), now, signals.join(',') || null);
+  const db = c.env.DB;
+
+  // Proxy bots: a brand-new Direct visit with a bot sign waits (see lib/hold.ts) until the reader shows up.
+  if (body.t === 'pageview') {
+    const reason = holdReason({ url, referrer: body.r, signals, siteHost: site.domain });
+    if (reason) {
+      const [ses, vis] = await db.batch([
+        db.prepare('SELECT 1 FROM sessions WHERE site_id = ? AND id = ?').bind(site.id, body.sid),
+        db.prepare('SELECT 1 FROM visitors WHERE site_id = ? AND id = ?').bind(site.id, body.vid),
+      ]);
+      if (!ses.results.length && !vis.results.length) {
+        await db
+          .prepare('INSERT OR IGNORE INTO held_visits (site_id, session_id, ts, body, signals, reason) VALUES (?, ?, ?, ?, ?, ?)')
+          .bind(site.id, body.sid, now, raw, signals.join(',') || null, reason)
+          .run();
+        return c.body(null, 202);
+      }
+    } else if (await db.prepare('SELECT 1 FROM held_visits WHERE site_id = ? AND session_id = ?').bind(site.id, body.sid).first()) {
+      // A further page in a held visit without any interaction in between (a person clicking a link would have
+      // released it on the way): still a bot.
+      return c.body(null, 202);
+    }
+  } else if (body.t !== 'ping') {
+    const held = await db
+      .prepare('SELECT ts, body, signals, queued FROM held_visits WHERE site_id = ? AND session_id = ?')
+      .bind(site.id, body.sid)
+      .first<{ ts: number; body: string; signals: string | null; queued: string | null }>();
+    if (held) {
+      const queued = (held.queued ? JSON.parse(held.queued) : []) as { ts: number; body: Payload }[];
+      if (!RELEASES.has(body.t)) {
+        // e.g. "paywall shown" fired on load: not a sign of a person. Keep it in case the visit is released.
+        if (body.t === 'goal' && queued.length < 10) {
+          queued.push({ ts: now, body });
+          await db
+            .prepare('UPDATE held_visits SET queued = ? WHERE site_id = ? AND session_id = ?')
+            .bind(JSON.stringify(queued), site.id, body.sid)
+            .run();
+        }
+        return c.body(null, 202);
+      }
+      // A person after all: record the held pageview and goals as they happened, then this event.
+      await db.prepare('DELETE FROM held_visits WHERE site_id = ? AND session_id = ?').bind(site.id, body.sid).run();
+      const geo = geoOf(c);
+      const first = JSON.parse(held.body) as Payload;
+      await ingest(db, site, first, new URL(first.u), ua, geo, held.ts, held.signals);
+      for (const q of queued) await ingest(db, site, q.body, new URL(q.body.u), ua, geo, q.ts);
+    }
+  }
+
+  await ingest(db, site, body, url, ua, geoOf(c), now, signals.join(',') || null);
   return c.body(null, 202);
 }
 

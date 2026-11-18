@@ -1,6 +1,7 @@
 import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { handleEvent } from './collect';
+import { HOLD_MS } from './lib/hold';
 import { forgetSite, type AppEnv, type Site } from './env';
 import { ADMIN_ID, adminEmail, clearSession, currentUser, emailLogin, googleCallback, googleStart, isHosted, requireUser, setSession, signupOpen, siteAccessSql, siteRole, type SiteRole, type User } from './auth';
 import { billingWebhook, checkout, planInfo } from './billing';
@@ -688,8 +689,10 @@ app.all('*', async (c) => {
 
 export default {
   fetch: app.fetch,
-  // Hourly Cron Trigger (wrangler.jsonc): sends the email reports that are due.
+  // Hourly Cron Trigger (wrangler.jsonc): sends the email reports that are due and clears expired held visits.
   async scheduled(_controller: ScheduledController, env: AppEnv['Bindings'], ctx: ExecutionContext) {
     ctx.waitUntil(runScheduledReports(env));
+    // Held visits that never showed a sign of a person (see lib/hold.ts) are dropped.
+    ctx.waitUntil(env.DB.prepare('DELETE FROM held_visits WHERE ts < ?').bind(Date.now() - HOLD_MS).run());
   },
 } satisfies ExportedHandler<AppEnv['Bindings']>;
