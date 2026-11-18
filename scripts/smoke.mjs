@@ -115,7 +115,7 @@ assert(byPage.current.visitors === 1, 'filter by visited page');
 const cust = (await call(`/api/sites/${site.id}/customers?period=today`)).body;
 assert(cust.length === 2 && cust.some((c) => c.renewal === 1), 'journey lists payment + renewal');
 const prof = (await call(`/api/sites/${site.id}/visitors/${vid}`)).body;
-assert(prof.visitor.email === 'jane@acme.com' && prof.events.length === 4 && prof.payments.length === 3, 'visitor profile');
+assert(prof.visitor.email === 'jane@acme.com' && prof.events.filter((e) => e.type !== 'identify').length === 4 && prof.payments.length === 3, 'visitor profile');
 
 const f = (await call(`/api/sites/${site.id}/funnels`, { method: 'POST', body: JSON.stringify({ name: 'Buy', steps: [{ type: 'page', value: '/' }, { type: 'page', value: '/pric*' }, { type: 'goal', value: 'checkout_click' }] }) })).body;
 const fs = (await call(`/api/sites/${site.id}/funnels/${f.id}/stats?period=today`)).body;

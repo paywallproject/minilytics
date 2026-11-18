@@ -44,8 +44,8 @@ export function holdReason(input: {
   return null;
 }
 
-/** How long a held visit waits for a sign of a person. */
-export const HOLD_MS = 3 * 3_600_000;
+/** Held visits (counted or not) are kept this long so the hold can be checked, then deleted. */
+export const HELD_KEEP_MS = 7 * 86_400_000;
 
 /**
  * Staying on the page also counts: 94% of the proxy crawler left within a second, while 80% of paying readers who
@@ -67,7 +67,7 @@ export const RELEASE_ENGAGED_MS = 3_000;
 export const RELEASES = new Set(['identify', 'outbound']);
 
 /** Should a held visit be counted now? */
-export function releasedBy(held: { visible: number; engaged: number; signals: string | null }): boolean {
+export function releasedBy(held: { visible: number; engaged: number; signals: string | null; engage_ms?: number | null }): boolean {
   if (held.engaged && held.visible >= RELEASE_ENGAGED_MS) return true;
   return held.visible >= RELEASE_VISIBLE_MS && !NO_TIME_RELEASE.test(held.signals ?? '');
 }

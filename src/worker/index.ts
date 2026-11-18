@@ -1,7 +1,8 @@
 import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { handleEvent } from './collect';
-import { HOLD_MS } from './lib/hold';
+import { HELD_KEEP_MS } from './lib/hold';
+import { heldReport } from './held';
 import { forgetSite, type AppEnv, type Site } from './env';
 import { ADMIN_ID, adminEmail, clearSession, currentUser, emailLogin, googleCallback, googleStart, isHosted, requireUser, setSession, signupOpen, siteAccessSql, siteRole, type SiteRole, type User } from './auth';
 import { billingWebhook, checkout, planInfo } from './billing';
@@ -580,7 +581,7 @@ app.delete('/api/sites/:id', async (c) => {
 app.get('/api/sites/:id/overview', async (c) => c.json(await overview(await makeCtx(c))));
 
 // Bot-check dimensions under evaluation: only admins and staff see them.
-const ADMIN_DIMS = new Set(['signals', 'engaged', 'network']);
+const ADMIN_DIMS = new Set(['signals', 'engaged', 'network', 'engage_kind', 'engage_delay']);
 app.get('/api/sites/:id/breakdown', async (c) => {
   if (ADMIN_DIMS.has(c.req.query('dim') ?? '') && c.get('role') !== 'admin') return c.json({ error: 'Not available' }, 403);
   try {
@@ -607,6 +608,11 @@ app.post('/api/sites/:id/pending-payments', async (c) => {
   return c.json({ ok: true });
 });
 app.post('/api/sites/:id/rematch', async (c) => c.json(await rematchPayments(c.env.DB, c.get('site'))));
+// Admin check of the proxy-bot hold: what was held and not counted (lib/hold.ts).
+app.get('/api/sites/:id/held', async (c) => {
+  if (c.get('role') !== 'admin') return c.json({ error: 'Not available' }, 403);
+  return c.json(await heldReport(await makeCtx(c)));
+});
 app.get('/api/sites/:id/realtime', async (c) => c.json(await realtime(c.env.DB, c.get('site'))));
 app.get('/api/sites/:id/customers', async (c) => c.json(await customers(await makeCtx(c))));
 app.get('/api/sites/:id/visitors', async (c) => c.json(await visitors(await makeCtx(c))));
@@ -689,10 +695,10 @@ app.all('*', async (c) => {
 
 export default {
   fetch: app.fetch,
-  // Hourly Cron Trigger (wrangler.jsonc): sends the email reports that are due and clears expired held visits.
+  // Hourly Cron Trigger (wrangler.jsonc): sends the email reports that are due and clears old held visits.
   async scheduled(_controller: ScheduledController, env: AppEnv['Bindings'], ctx: ExecutionContext) {
     ctx.waitUntil(runScheduledReports(env));
-    // Held visits that never showed a sign of a person (see lib/hold.ts) are dropped.
-    ctx.waitUntil(env.DB.prepare('DELETE FROM held_visits WHERE ts < ?').bind(Date.now() - HOLD_MS).run());
+    // Held visits (see lib/hold.ts) are kept a week for checking, then deleted.
+    ctx.waitUntil(env.DB.prepare('DELETE FROM held_visits WHERE ts < ?').bind(Date.now() - HELD_KEEP_MS).run());
   },
 } satisfies ExportedHandler<AppEnv['Bindings']>;

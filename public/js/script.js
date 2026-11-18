@@ -167,7 +167,10 @@
     engaged = true;
     ENGAGE.forEach(function (t) { w.removeEventListener(t, onEngage, true); });
     release();
-    send('engage', {}, true);
+    // Which interaction came first and how long after the page started loading (helps tell scripts from people).
+    var ms;
+    try { ms = Math.round(w.performance.now()); } catch (x) {}
+    send('engage', { p: { k: e && e.type, ms: ms } }, true);
   }
   ENGAGE.forEach(function (t) { w.addEventListener(t, onEngage, { capture: true, passive: true }); });
   var hist = w.history;

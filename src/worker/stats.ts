@@ -297,6 +297,10 @@ const SESSION_DIMS: Record<string, string> = {
   signals: "COALESCE(s.signals, 'none')",
   engaged: 's.engaged',
   network: 's.network',
+  engage_kind: 's.engage_kind',
+  // How soon after the page started loading the first interaction came (scripts tend to be instant or fixed).
+  engage_delay: `CASE WHEN s.engage_ms IS NULL THEN NULL WHEN s.engage_ms < 500 THEN 'under 0.5s' WHEN s.engage_ms < 1000 THEN '0.5-1s'
+    WHEN s.engage_ms < 2000 THEN '1-2s' WHEN s.engage_ms < 5000 THEN '2-5s' WHEN s.engage_ms < 15000 THEN '5-15s' ELSE '15s+' END`,
 };
 
 export interface BreakdownRow {

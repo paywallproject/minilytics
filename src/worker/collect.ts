@@ -6,7 +6,7 @@ import { getSite, type AppEnv, type Site } from './env';
 import { isOwnerVisit } from './owner';
 import { isHostingAsn } from './lib/datacenter';
 import { botSignals } from './lib/signals';
-import { HOLD_MS, holdReason, releasedBy, RELEASES } from './lib/hold';
+import { holdReason, releasedBy, RELEASES } from './lib/hold';
 import { isBot, isSpamReferrer, parseUA } from './lib/ua';
 import { creditedSessionSql, dodoProductOfLink, firstTouchSessionSql, learnDodoProducts } from './payments';
 
@@ -84,23 +84,35 @@ export async function handleEvent(c: Context<AppEnv>) {
   const db = c.env.DB;
 
   // Proxy bots: a brand-new Direct visit with a bot sign waits (see lib/hold.ts) until the reader shows up.
+  const engage = engageOf(body);
   if (body.t === 'pageview') {
+    const [ses, vis, hv] = await db.batch([
+      db.prepare('SELECT 1 FROM sessions WHERE site_id = ? AND id = ?').bind(site.id, body.sid),
+      db.prepare('SELECT 1 FROM visitors WHERE site_id = ? AND id = ?').bind(site.id, body.vid),
+      db.prepare('SELECT reason, queued FROM held_visits WHERE site_id = ? AND session_id = ? AND released_at IS NULL').bind(site.id, body.sid),
+    ]);
+    const open = hv.results[0] as { reason: string; queued: string | null } | undefined;
+    // A further page in a held visit without a sign of a person in between (a person clicking a link would have
+    // released it on the way): still a bot.
+    if (open && open.reason !== EARLY) return c.body(null, 202);
     const reason = holdReason({ url, referrer: body.r, signals, siteHost: site.domain, device: parseUA(ua, Number(body.sw) || undefined).device });
-    if (reason) {
-      const [ses, vis] = await db.batch([
-        db.prepare('SELECT 1 FROM sessions WHERE site_id = ? AND id = ?').bind(site.id, body.sid),
-        db.prepare('SELECT 1 FROM visitors WHERE site_id = ? AND id = ?').bind(site.id, body.vid),
-      ]);
-      if (!ses.results.length && !vis.results.length) {
-        await db
-          .prepare('INSERT OR IGNORE INTO held_visits (site_id, session_id, ts, body, signals, reason) VALUES (?, ?, ?, ?, ?, ?)')
-          .bind(site.id, body.sid, now, raw, signals.join(',') || null, reason)
-          .run();
-        return c.body(null, 202);
-      }
-    } else if (await db.prepare('SELECT 1 FROM held_visits WHERE site_id = ? AND session_id = ?').bind(site.id, body.sid).first()) {
-      // A further page in a held visit without any interaction in between (a person clicking a link would have
-      // released it on the way): still a bot.
+    if (reason && !ses.results.length && !vis.results.length) {
+      // Goals that arrived before this pageview (see below) stay queued with it.
+      await db
+        .prepare(
+          `INSERT INTO held_visits (site_id, session_id, ts, body, signals, reason, meta) VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (site_id, session_id) DO UPDATE SET ts = excluded.ts, body = excluded.body, signals = excluded.signals,
+             reason = excluded.reason, meta = excluded.meta`,
+        )
+        .bind(site.id, body.sid, now, raw, signals.join(',') || null, reason, heldMeta(ua, body, geoOf(c)))
+        .run();
+      return c.body(null, 202);
+    }
+    if (open) {
+      // Not held after all: record the pageview, then the goals that came before it.
+      await db.prepare('DELETE FROM held_visits WHERE site_id = ? AND session_id = ?').bind(site.id, body.sid).run();
+      await ingest(db, site, body, url, ua, geoOf(c), now, signals.join(',') || null);
+      for (const q of queuedOf(open.queued)) await ingest(db, site, q.body, new URL(q.body.u), ua, geoOf(c), q.ts);
       return c.body(null, 202);
     }
   } else if (body.t === 'ping') {
@@ -112,43 +124,61 @@ export async function handleEvent(c: Context<AppEnv>) {
       .run();
     if (ses.meta.changes) return c.body(null, 202);
     const held = await db
-      .prepare('UPDATE held_visits SET visible = visible + ? WHERE site_id = ? AND session_id = ? RETURNING ts, body, signals, queued, visible, engaged')
-      .bind(ms, site.id, body.sid)
-      .first<HeldRow & { visible: number; engaged: number }>();
-    if (held && releasedBy(held)) {
-      await release(db, site, held, ua, geoOf(c));
-      if (held.engaged) await ingest(db, site, { ...body, t: 'engage' }, url, ua, geoOf(c), now);
+      .prepare(
+        `UPDATE held_visits SET visible = visible + ? WHERE site_id = ? AND session_id = ? AND released_at IS NULL AND reason != ?
+         RETURNING ts, body, signals, queued, visible, engaged, engage_kind, engage_ms`,
+      )
+      .bind(ms, site.id, body.sid, EARLY)
+      .first<HeldRow>();
+    if (held && releasedBy(held) && (await release(db, site, held, ua, geoOf(c), now))) {
       await ingest(db, site, { ...body, d: held.visible }, url, ua, geoOf(c), now);
     }
     return c.body(null, 202);
   } else {
     const held = await db
-      .prepare('SELECT ts, body, signals, queued, visible FROM held_visits WHERE site_id = ? AND session_id = ?')
+      .prepare(
+        `SELECT ts, body, signals, queued, visible, engaged, engage_kind, engage_ms, reason FROM held_visits
+         WHERE site_id = ? AND session_id = ? AND released_at IS NULL`,
+      )
       .bind(site.id, body.sid)
-      .first<HeldRow & { visible: number }>();
-    if (held && body.t === 'engage') {
-      // Remember it: it counts together with a few seconds on screen (a later ping), unless those are already there.
-      if (!releasedBy({ ...held, engaged: 1 })) {
-        await db.prepare('UPDATE held_visits SET engaged = 1 WHERE site_id = ? AND session_id = ?').bind(site.id, body.sid).run();
+      .first<HeldRow & { reason: string }>();
+    if (held?.reason === EARLY) {
+      // Its pageview hasn't arrived yet: keep further goals with it, let anything else through.
+      if (body.t === 'goal') {
+        await queueGoal(db, site, body, now, held.queued);
         return c.body(null, 202);
       }
-      await release(db, site, held, ua, geoOf(c));
-      await ingest(db, site, { ...body, t: 'ping', d: held.visible }, url, ua, geoOf(c), now);
+    } else if (held && body.t === 'engage') {
+      // Remember it: it counts together with a few seconds on screen (a later ping), unless those are already there.
+      const h = { ...held, engaged: 1, engage_kind: engage.kind, engage_ms: engage.ms };
+      if (!releasedBy(h)) {
+        await db
+          .prepare('UPDATE held_visits SET engaged = 1, engage_kind = ?, engage_ms = ? WHERE site_id = ? AND session_id = ?')
+          .bind(engage.kind, engage.ms, site.id, body.sid)
+          .run();
+        return c.body(null, 202);
+      }
+      if (await release(db, site, h, ua, geoOf(c), now)) await ingest(db, site, { ...body, t: 'ping', d: held.visible }, url, ua, geoOf(c), now);
+      return c.body(null, 202);
     } else if (held) {
-      const queued = (held.queued ? JSON.parse(held.queued) : []) as { ts: number; body: Payload }[];
       if (!RELEASES.has(body.t)) {
         // e.g. "paywall shown" fired on load: not a sign of a person. Keep it in case the visit is released.
-        if (body.t === 'goal' && queued.length < 10) {
-          queued.push({ ts: now, body });
-          await db
-            .prepare('UPDATE held_visits SET queued = ? WHERE site_id = ? AND session_id = ?')
-            .bind(JSON.stringify(queued), site.id, body.sid)
-            .run();
-        }
+        if (body.t === 'goal') await queueGoal(db, site, body, now, held.queued);
         return c.body(null, 202);
       }
-      // A person after all: record the held pageview and goals as they happened, then this event.
-      await release(db, site, held, ua, geoOf(c));
+      // A person after all (logged in, clicked out): record the held pageview and goals, then this event.
+      await release(db, site, held, ua, geoOf(c), now);
+    } else if (body.t === 'goal' && !(await db.prepare('SELECT 1 FROM sessions WHERE site_id = ? AND id = ?').bind(site.id, body.sid).first())) {
+      // A goal before its visit's first pageview (sites fire "paywall shown" early, and the enewspf crawler's arrives
+      // first): wait for the pageview, which decides whether the visit is held.
+      await db
+        .prepare(
+          `INSERT INTO held_visits (site_id, session_id, ts, body, signals, reason, queued) VALUES (?, ?, ?, '{}', NULL, ?, ?)
+           ON CONFLICT (site_id, session_id) DO NOTHING`,
+        )
+        .bind(site.id, body.sid, now, EARLY, JSON.stringify([{ ts: now, body }]))
+        .run();
+      return c.body(null, 202);
     }
   }
 
@@ -156,23 +186,62 @@ export async function handleEvent(c: Context<AppEnv>) {
   return c.body(null, 202);
 }
 
+/** What a held visit looked like, for the admin check (the visit itself isn't stored unless it's released). */
+function heldMeta(ua: string, body: Payload, geo: Geo): string {
+  const { browser, os, device } = parseUA(ua, Number(body.sw) || undefined);
+  return JSON.stringify({ browser, os, device, country: geo.country, region: geo.region, city: geo.city, network: geo.network });
+}
+
+/** Marks a goal-only row waiting for its pageview. */
+const EARLY = 'early_goal';
+
 interface HeldRow {
   ts: number;
   body: string;
   signals: string | null;
   queued: string | null;
+  visible: number;
+  engaged: number;
+  engage_kind: string | null;
+  engage_ms: number | null;
 }
 
-/** A held visit turned out to be a person: record its pageview and any goals it fired, as they happened. */
-async function release(db: D1Database, site: Site, held: HeldRow, ua: string, geo: Geo) {
-  const sid = (JSON.parse(held.body) as Payload).sid;
-  // Only one event may release it (two can arrive together): whoever deletes the row records the visit.
-  const del = await db.prepare('DELETE FROM held_visits WHERE site_id = ? AND session_id = ?').bind(site.id, sid).run();
-  if (!del.meta.changes) return;
+const queuedOf = (q: string | null) => (q ? JSON.parse(q) : []) as { ts: number; body: Payload }[];
+
+async function queueGoal(db: D1Database, site: Site, body: Payload, now: number, queued: string | null) {
+  const q = queuedOf(queued);
+  if (q.length >= 10) return false;
+  q.push({ ts: now, body });
+  await db.prepare('UPDATE held_visits SET queued = ? WHERE site_id = ? AND session_id = ?').bind(JSON.stringify(q), site.id, body.sid).run();
+  return true;
+}
+
+/** The first interaction the tracker reports: its kind and how long after the page started loading it came. */
+function engageOf(body: Payload): { kind: string | null; ms: number | null } {
+  if (body.t !== 'engage' || !body.p) return { kind: null, ms: null };
+  const k = typeof body.p.k === 'string' && /^[a-z]{3,20}$/.test(body.p.k) ? body.p.k : null;
+  const ms = Number(body.p.ms);
+  return { kind: k, ms: Number.isFinite(ms) && ms >= 0 ? Math.min(Math.round(ms), 86_400_000) : null };
+}
+
+/**
+ * A held visit turned out to be a person: record its pageview, any goals it fired and its interaction, as they
+ * happened. Returns false if another event released it first.
+ */
+async function release(db: D1Database, site: Site, held: HeldRow, ua: string, geo: Geo, now: number): Promise<boolean> {
   const first = JSON.parse(held.body) as Payload;
+  // Only one event may release it (two can arrive together); the row stays a week for checking.
+  const upd = await db
+    .prepare('UPDATE held_visits SET released_at = ? WHERE site_id = ? AND session_id = ? AND released_at IS NULL')
+    .bind(now, site.id, first.sid)
+    .run();
+  if (!upd.meta.changes) return false;
   await ingest(db, site, first, new URL(first.u), ua, geo, held.ts, held.signals);
-  const queued = (held.queued ? JSON.parse(held.queued) : []) as { ts: number; body: Payload }[];
-  for (const q of queued) await ingest(db, site, q.body, new URL(q.body.u), ua, geo, q.ts);
+  for (const q of queuedOf(held.queued)) await ingest(db, site, q.body, new URL(q.body.u), ua, geo, q.ts);
+  if (held.engaged) {
+    await ingest(db, site, { ...first, t: 'engage', p: { k: held.engage_kind, ms: held.engage_ms } }, new URL(first.u), ua, geo, now);
+  }
+  return true;
 }
 
 /**
@@ -276,7 +345,11 @@ export async function ingest(
 
   // The visitor scrolled, tapped, clicked or typed: something a page-loading bot rarely does.
   if (t === 'engage') {
-    await db.prepare('UPDATE sessions SET engaged = 1 WHERE site_id = ? AND id = ?').bind(site.id, sid).run();
+    const e = engageOf(body);
+    await db
+      .prepare('UPDATE sessions SET engaged = 1, engage_kind = COALESCE(engage_kind, ?), engage_ms = COALESCE(engage_ms, ?) WHERE site_id = ? AND id = ?')
+      .bind(e.kind, e.ms, site.id, sid)
+      .run();
     return;
   }
 

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { navigate } from '../App';
 import { GoalsPanel } from '../components/GoalsPanel';
+import { HeldPanel } from '../components/HeldPanel';
 import { OverviewCard } from '../components/OverviewCard';
 import { Panel, renderLabel } from '../components/Panel';
 import { Toolbar } from '../components/Toolbar';
@@ -193,6 +194,8 @@ export function Dashboard({ siteId, fallback, header }: { siteId: string; fallba
         <div className="mt-5">
           <GoalsPanel totalVisitors={overview?.current.visitors ?? 0} />
         </div>
+
+        {site.role === 'admin' && <HeldPanel />}
 
         <p className="mt-8 text-center text-xs text-stone-400">
           Times in {site.timezone} · Revenue in {site.currency}
