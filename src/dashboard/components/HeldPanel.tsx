@@ -6,6 +6,7 @@ import { useApi } from '../lib/useApi';
 type Row = { label: string | null; n: number };
 interface HeldReport {
   totals: { reason: string; counted: number; n: number }[];
+  cameBack: number;
   releasedHow: Row[];
   notCounted: Record<'network' | 'city' | 'os' | 'page' | 'visible' | 'engaged', Row[]>;
   recent: {
@@ -64,7 +65,9 @@ export function HeldPanel() {
         Only you and staff see this. A new visitor's first visit on a computer, or any first visit that looks automated, waits for a sign
         that someone saw the page (looks automated: interacting plus a few seconds, or 15 seconds on screen; otherwise any interaction or
         time on screen, a second page, a login or a click out). {fmtNumber(held)} were held: {fmtNumber(sum(1))} turned out to be people
-        and were counted, {fmtNumber(sum(0))} weren't counted. Check the list below for anything that looks like a real reader.
+        and were counted, {fmtNumber(sum(0))} weren't counted. Of those, {fmtNumber(data.cameBack)} came back later and were counted then
+        (real readers whose first visit was missed; bots don't come back). Check the list below for anything else that looks like a real
+        reader.
       </p>
       <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {list('Why held (not counted)', data.totals.filter((t) => !t.counted).map((t) => ({ label: t.reason, n: t.n })), (l) => REASONS[l ?? ''] ?? l ?? '–')}
