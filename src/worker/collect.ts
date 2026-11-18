@@ -33,6 +33,8 @@ interface Payload {
   /** Hash of the browser setup, and 1 if graphics are drawn in software (a new visit's first pageview). */
   fl?: string;
   gs?: number;
+  /** Age in days of the article the visit landed on, if the page says (a new visit's first pageview). */
+  pa?: number;
 }
 
 const clip = (s: unknown, n = 255): string | null =>
@@ -137,11 +139,11 @@ export async function handleEvent(c: Context<AppEnv>) {
       // Goals that arrived before this pageview (see below) stay queued with it.
       await db
         .prepare(
-          `INSERT INTO held_visits (site_id, session_id, ts, body, signals, reason, meta, fleet) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO held_visits (site_id, session_id, ts, body, signals, reason, meta, fleet, page_age) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (site_id, session_id) DO UPDATE SET ts = excluded.ts, body = excluded.body, signals = excluded.signals,
-             reason = excluded.reason, meta = excluded.meta, fleet = excluded.fleet`,
+             reason = excluded.reason, meta = excluded.meta, fleet = excluded.fleet, page_age = excluded.page_age`,
         )
-        .bind(site.id, body.sid, now, raw, signals.join(',') || null, reason, heldMeta(ua, body, geoOf(c)), fleetOf(body))
+        .bind(site.id, body.sid, now, raw, signals.join(',') || null, reason, heldMeta(ua, body, geoOf(c)), fleetOf(body), pageAgeOf(body))
         .run();
       // An interaction that arrived before this pageview (see below) may already be enough.
       if (open?.engaged) {
@@ -269,6 +271,11 @@ const queuedOf = (q: string | null) => (q ? JSON.parse(q) : []) as { ts: number;
 
 /** The browser-setup hash from a new visit's first pageview, if valid. */
 const fleetOf = (body: Payload): string | null => (typeof body.fl === 'string' && /^[0-9a-f]{8}$/.test(body.fl) ? body.fl : null);
+
+const pageAgeOf = (body: Payload): number | null => {
+  const n = Number(body.pa);
+  return body.pa != null && Number.isFinite(n) && n >= 0 ? Math.min(Math.round(n), 36_500) : null;
+};
 
 /** Activity counts from an early ping ("events.seconds"), or nulls. */
 function activityOf(body: Payload): { events: number | null; secs: number | null } {
@@ -613,8 +620,8 @@ function newSession(
       .prepare(
         `INSERT OR IGNORE INTO sessions (site_id, id, visitor_id, started_at, last_seen_at, pageviews, hostname, entry_page, exit_page,
           referrer, referrer_domain, source, channel, utm_source, utm_medium, utm_campaign, utm_term, utm_content, ref,
-          country, region, city, browser, os, device, lat, lon, signals, network, fleet)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          country, region, city, browser, os, device, lat, lon, signals, network, fleet, page_age)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         site.id,
@@ -646,6 +653,7 @@ function newSession(
         signals,
         geo.network,
         fleetOf(body),
+        pageAgeOf(body),
       ),
     // Separate statement so concurrent first events (pageview + goal racing) never double count.
     ...(pageviews

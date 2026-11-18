@@ -147,7 +147,7 @@
     lastPage = page;
     pings = 0;
     var data = { r: firstView ? d.referrer : '', tz: firstView ? timeZone() : undefined };
-    if (firstView && newSession) { var f = fleet(); data.fl = f[0]; if (f[1]) data.gs = 1; }
+    if (firstView && newSession) { var f = fleet(); data.fl = f[0]; if (f[1]) data.gs = 1; data.pa = pageAge(); }
     // A new visit with no referrer and no campaign tags is where page-loading bots hide (they arrive "Direct" and
     // never touch the page). Hold its pageview until the first sign of a person: moving the mouse, scrolling,
     // tapping, clicking or typing. Visits from anywhere else are counted straight away. Only on sites that opt in.
@@ -193,6 +193,20 @@
     var str = parts.join('|'), h = 0x811c9dc5;
     for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
     return [('0000000' + h.toString(16)).slice(-8), soft];
+  }
+  // How many days old the article is, from its publish date in the page (measuring only).
+  function pageAge() {
+    try {
+      var m = d.querySelector('meta[property="article:published_time"],meta[itemprop="datePublished"]');
+      var t = m && m.getAttribute('content');
+      if (!t) {
+        var ld = d.querySelectorAll('script[type="application/ld+json"]');
+        for (var i = 0; i < ld.length && !t; i++) { var x = /"datePublished"\s*:\s*"([^"]+)"/.exec(ld[i].textContent || ''); if (x) t = x[1]; }
+      }
+      if (!t) { var tm = d.querySelector('article time[datetime]'); t = tm && tm.getAttribute('datetime'); }
+      var ms = t ? Date.parse(t) : NaN;
+      return ms > 0 ? Math.max(0, Math.round((Date.now() - ms) / 86400000)) : undefined;
+    } catch (e) { return undefined; }
   }
   function timeZone() {
     try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return undefined; }

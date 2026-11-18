@@ -302,6 +302,8 @@ const SESSION_DIMS: Record<string, string> = {
   botd: "COALESCE(s.botd, 'not run')",
   // Hash of a new visit's browser setup (measuring only; see migration 0027).
   fleet: 's.fleet',
+  // Age of the article a new visit landed on (measuring only).
+  page_age: `CASE WHEN s.page_age IS NULL THEN 'unknown' WHEN s.page_age < 30 THEN 'under a month' WHEN s.page_age < 365 THEN 'under a year' WHEN s.page_age < 3 * 365 THEN '1-3 years' ELSE '3+ years' END`,
   // How much a new visit's first pages were used (measuring only): separate seconds with a move, scroll, tap or key.
   activity: `CASE WHEN s.act_secs IS NULL THEN 'not measured' WHEN s.act_secs = 0 THEN '0s' WHEN s.act_secs = 1 THEN '1s'
     WHEN s.act_secs <= 3 THEN '2-3s' WHEN s.act_secs <= 7 THEN '4-7s' ELSE '8s+' END`,
