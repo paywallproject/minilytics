@@ -30,6 +30,7 @@ const REASONS: Record<string, string> = {
   linux_desktop: 'Linux computer',
   deep_archive: 'Landed deep in archive',
   new_desktop: 'New visit on a computer',
+  new_desktop_far: 'New visit on a computer, outside the home region',
 };
 
 const path = (u: string | null) => {

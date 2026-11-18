@@ -15,7 +15,8 @@
  *    an archive (0% vs 4.3%). Counted after an interaction plus 3s on screen, or 15s on screen.
  *  - outside: from a country the site's real readers don't come from (audience.ts), any device. Counted after an
  *    interaction plus 15s on screen, or a login. 1.0% of real readers' first visits vs 11% of one-time.
- *  - light: any other new visit on a computer. Counted after any interaction, any time on screen (the tracker
+ *  - light: any other new visit on a computer. From outside the site's home region (state), time on the page alone
+ *    doesn't count it (audience.ts inHomeRegion). Counted after any interaction, any time on screen (the tracker
  *    reports after about a second), a second page, a login or a click out.
  * Together: 2.9% of real readers' first visits not counted (mostly visits never on screen; they're counted when
  * they come back), and 34% of one-time visits. Phones without a strict sign aren't held yet: the old tracker didn't
@@ -32,12 +33,13 @@ const TIER: Record<string, Tier> = {
   linux_desktop: 'strict',
   deep_archive: 'strict',
   new_desktop: 'light',
+  new_desktop_far: 'light',
 };
 
 export const tierOf = (reason: string): Tier => TIER[reason] ?? 'strict';
 
 /** Why a brand-new visitor's first visit is held, or null to count it straight away. */
-export function holdReason(input: { url: URL; signals: string[]; device?: string; os?: string; outside?: boolean }): string | null {
+export function holdReason(input: { url: URL; signals: string[]; device?: string; os?: string; outside?: boolean; far?: boolean }): string | null {
   const { url, signals } = input;
   const has = (s: string) => signals.includes(s);
   if (has('headless') || (has('no_client_hints') && has('old_chrome'))) return 'automated';
@@ -49,7 +51,8 @@ export function holdReason(input: { url: URL; signals: string[]; device?: string
   if (input.os === 'Linux' && input.device === 'Desktop') return 'linux_desktop';
   const page = url.pathname.match(/\/page\/(\d+)\/?$/);
   if (page && Number(page[1]) >= 10) return 'deep_archive';
-  if (input.device === 'Desktop') return 'new_desktop';
+  // From outside the site's home region (audience.ts), time on the page alone doesn't count (see releasedBy).
+  if (input.device === 'Desktop') return input.far ? 'new_desktop_far' : 'new_desktop';
   return null;
 }
 
@@ -71,7 +74,9 @@ export function releasedBy(held: { reason: string; visible: number; engaged: num
     case 'strict':
       return (!!held.engaged && held.visible >= STRICT_ENGAGED_MS) || held.visible >= STRICT_VISIBLE_MS;
     case 'light':
-      return !!held.engaged || held.visible > 0;
+      // From outside the site's home region, time alone isn't enough: crawlers on home connections across the
+      // country sit on pages without touching them, while a local paper's readers are local.
+      return !!held.engaged || (held.visible > 0 && held.reason !== 'new_desktop_far');
   }
 }
 

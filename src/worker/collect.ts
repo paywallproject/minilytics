@@ -7,7 +7,7 @@ import { isOwnerVisit } from './owner';
 import { isHostingAsn } from './lib/datacenter';
 import { botSignals } from './lib/signals';
 import { holdReason, releasedBy, releasedByEvent, releasedByPage } from './lib/hold';
-import { outsideAudience } from './audience';
+import { inHomeRegion, outsideAudience } from './audience';
 import { isBot, isSpamReferrer, parseUA } from './lib/ua';
 import { creditedSessionSql, dodoProductOfLink, firstTouchSessionSql, learnDodoProducts } from './payments';
 
@@ -108,8 +108,10 @@ export async function handleEvent(c: Context<AppEnv>) {
     }
     const { device, os } = parseUA(ua, Number(body.sw) || undefined);
     const brandNew = !ses.results.length && !vis.results.length;
-    const outside = brandNew && (await outsideAudience(db, site.id, geoOf(c).country));
-    const reason = holdReason({ url, signals, device, os, outside });
+    const geo = geoOf(c);
+    const outside = brandNew && (await outsideAudience(db, site.id, geo.country));
+    const far = brandNew && device === 'Desktop' && !(await inHomeRegion(db, site.id, geo.country, geo.region));
+    const reason = holdReason({ url, signals, device, os, outside, far });
     if (reason && brandNew) {
       // Goals that arrived before this pageview (see below) stay queued with it.
       await db
