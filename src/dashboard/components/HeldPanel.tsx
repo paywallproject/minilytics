@@ -22,9 +22,12 @@ interface HeldReport {
 }
 
 const REASONS: Record<string, string> = {
+  automated: 'Automated browser',
   tz_mismatch: 'Timezone ≠ location',
+  old_browser: 'Outdated / incomplete Chrome',
+  linux_desktop: 'Linux computer',
   deep_archive: 'Landed deep in archive',
-  new_desktop: 'New Direct visit on a computer',
+  new_desktop: 'New visit on a computer',
 };
 
 const path = (u: string | null) => {
@@ -58,8 +61,9 @@ export function HeldPanel() {
     <div className="card mt-5 p-4">
       <div className="text-sm font-medium">Held as likely bots</div>
       <p className="mt-1 text-xs text-stone-500">
-        Only you and staff see this. New Direct visits that looked like bots waited for a sign of a person (interacting and staying a few
-        seconds, 15 seconds on screen, logging in or clicking out). {fmtNumber(held)} were held: {fmtNumber(sum(1))} turned out to be people
+        Only you and staff see this. A new visitor's first visit on a computer, or any first visit that looks automated, waits for a sign
+        that someone saw the page (looks automated: interacting plus a few seconds, or 15 seconds on screen; otherwise any interaction or
+        time on screen, a second page, a login or a click out). {fmtNumber(held)} were held: {fmtNumber(sum(1))} turned out to be people
         and were counted, {fmtNumber(sum(0))} weren't counted. Check the list below for anything that looks like a real reader.
       </p>
       <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

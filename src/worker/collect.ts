@@ -6,7 +6,7 @@ import { getSite, type AppEnv, type Site } from './env';
 import { isOwnerVisit } from './owner';
 import { isHostingAsn } from './lib/datacenter';
 import { botSignals } from './lib/signals';
-import { holdReason, releasedBy, RELEASES } from './lib/hold';
+import { holdReason, releasedBy, releasedByEvent, releasedByPage } from './lib/hold';
 import { isBot, isSpamReferrer, parseUA } from './lib/ua';
 import { creditedSessionSql, dodoProductOfLink, firstTouchSessionSql, learnDodoProducts } from './payments';
 
@@ -83,19 +83,30 @@ export async function handleEvent(c: Context<AppEnv>) {
   if (body.t === 'pageview' && body.v === undefined) signals.push('old_script');
   const db = c.env.DB;
 
-  // Proxy bots: a brand-new Direct visit with a bot sign waits (see lib/hold.ts) until the reader shows up.
+  // The hold (lib/hold.ts): a brand-new visitor's first visit waits for a sign that someone saw the page.
   const engage = engageOf(body);
   if (body.t === 'pageview') {
     const [ses, vis, hv] = await db.batch([
       db.prepare('SELECT 1 FROM sessions WHERE site_id = ? AND id = ?').bind(site.id, body.sid),
       db.prepare('SELECT 1 FROM visitors WHERE site_id = ? AND id = ?').bind(site.id, body.vid),
-      db.prepare('SELECT reason, queued FROM held_visits WHERE site_id = ? AND session_id = ? AND released_at IS NULL').bind(site.id, body.sid),
+      db
+        .prepare(
+          `SELECT ts, body, signals, queued, visible, engaged, engage_kind, engage_ms, reason FROM held_visits
+           WHERE site_id = ? AND session_id = ? AND released_at IS NULL`,
+        )
+        .bind(site.id, body.sid),
     ]);
-    const open = hv.results[0] as { reason: string; queued: string | null } | undefined;
-    // A further page in a held visit without a sign of a person in between (a person clicking a link would have
-    // released it on the way): still a bot.
-    if (open && open.reason !== EARLY) return c.body(null, 202);
-    const reason = holdReason({ url, referrer: body.r, signals, siteHost: site.domain, device: parseUA(ua, Number(body.sw) || undefined).device });
+    const open = hv.results[0] as HeldRow | undefined;
+    if (open && open.reason !== EARLY) {
+      // A further page in a held visit. A light hold counts it (people click through, these crawlers load one page);
+      // otherwise it's still held.
+      if (!releasedByPage(open.reason)) return c.body(null, 202);
+      await release(db, site, open, ua, geoOf(c), now);
+      await ingest(db, site, body, url, ua, geoOf(c), now, signals.join(',') || null);
+      return c.body(null, 202);
+    }
+    const { device, os } = parseUA(ua, Number(body.sw) || undefined);
+    const reason = holdReason({ url, signals, device, os });
     if (reason && !ses.results.length && !vis.results.length) {
       // Goals that arrived before this pageview (see below) stay queued with it.
       await db
@@ -126,7 +137,7 @@ export async function handleEvent(c: Context<AppEnv>) {
     const held = await db
       .prepare(
         `UPDATE held_visits SET visible = visible + ? WHERE site_id = ? AND session_id = ? AND released_at IS NULL AND reason != ?
-         RETURNING ts, body, signals, queued, visible, engaged, engage_kind, engage_ms`,
+         RETURNING ts, body, signals, queued, visible, engaged, engage_kind, engage_ms, reason`,
       )
       .bind(ms, site.id, body.sid, EARLY)
       .first<HeldRow>();
@@ -141,7 +152,7 @@ export async function handleEvent(c: Context<AppEnv>) {
          WHERE site_id = ? AND session_id = ? AND released_at IS NULL`,
       )
       .bind(site.id, body.sid)
-      .first<HeldRow & { reason: string }>();
+      .first<HeldRow>();
     if (held?.reason === EARLY) {
       // Its pageview hasn't arrived yet: keep further goals with it, let anything else through.
       if (body.t === 'goal') {
@@ -149,7 +160,7 @@ export async function handleEvent(c: Context<AppEnv>) {
         return c.body(null, 202);
       }
     } else if (held && body.t === 'engage') {
-      // Remember it: it counts together with a few seconds on screen (a later ping), unless those are already there.
+      // Remember it. A light hold counts it now; a strict one together with a few seconds on screen (a later ping).
       const h = { ...held, engaged: 1, engage_kind: engage.kind, engage_ms: engage.ms };
       if (!releasedBy(h)) {
         await db
@@ -161,12 +172,12 @@ export async function handleEvent(c: Context<AppEnv>) {
       if (await release(db, site, h, ua, geoOf(c), now)) await ingest(db, site, { ...body, t: 'ping', d: held.visible }, url, ua, geoOf(c), now);
       return c.body(null, 202);
     } else if (held) {
-      if (!RELEASES.has(body.t)) {
+      if (!releasedByEvent(held.reason, body.t)) {
         // e.g. "paywall shown" fired on load: not a sign of a person. Keep it in case the visit is released.
         if (body.t === 'goal') await queueGoal(db, site, body, now, held.queued);
         return c.body(null, 202);
       }
-      // A person after all (logged in, clicked out): record the held pageview and goals, then this event.
+      // A person after all (logged in, or clicked out): record the held pageview and goals, then this event.
       await release(db, site, held, ua, geoOf(c), now);
     } else if (body.t === 'goal' && !(await db.prepare('SELECT 1 FROM sessions WHERE site_id = ? AND id = ?').bind(site.id, body.sid).first())) {
       // A goal before its visit's first pageview (sites fire "paywall shown" early, and the enewspf crawler's arrives
@@ -196,6 +207,7 @@ function heldMeta(ua: string, body: Payload, geo: Geo): string {
 const EARLY = 'early_goal';
 
 interface HeldRow {
+  reason: string;
   ts: number;
   body: string;
   signals: string | null;

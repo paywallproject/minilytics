@@ -1,34 +1,50 @@
 import { describe, expect, it } from 'vitest';
-import { holdReason } from '../src/worker/lib/hold';
+import { holdReason, releasedBy, releasedByEvent, releasedByPage, tierOf } from '../src/worker/lib/hold';
 
-const r = (u: string, signals: string[] = [], referrer: string | null = null) =>
-  holdReason({ url: new URL(u), referrer, signals, siteHost: 'enewspf.com' });
+const reason = (signals: string[] = [], o: { path?: string; device?: string; os?: string } = {}) =>
+  holdReason({ url: new URL('https://news.example' + (o.path ?? '/story')), signals, device: o.device ?? 'Desktop', os: o.os ?? 'Windows' });
 
-describe('server-side hold for proxy bots', () => {
-  it('holds a Direct visit whose browser timezone does not match its IP', () => {
-    expect(r('https://enewspf.com/story', ['tz_mismatch'])).toBe('tz_mismatch');
+describe('the hold: which first visits wait', () => {
+  it('treats headless browsers and old Chrome without client hints as automated', () => {
+    expect(reason(['headless'])).toBe('automated');
+    expect(reason(['no_client_hints', 'old_chrome', 'tz_mismatch'])).toBe('automated');
   });
-  it('holds a Direct visit that starts deep in an archive', () => {
-    expect(r('https://enewspf.com/category/latest-national-news/page/1192')).toBe('deep_archive');
-    expect(r('https://enewspf.com/page/62/')).toBe('deep_archive');
-    expect(r('https://enewspf.com/page/3')).toBeNull();
+  it('holds visits with a bot sign strictly, on any device and from any source', () => {
+    expect(reason(['tz_mismatch'], { device: 'Mobile', os: 'iOS' })).toBe('tz_mismatch');
+    expect(reason(['old_chrome'])).toBe('old_browser');
+    expect(reason(['no_client_hints'])).toBe('old_browser');
+    expect(reason([], { os: 'Linux' })).toBe('linux_desktop');
+    expect(reason([], { path: '/category/news/page/545' })).toBe('deep_archive');
+    expect(tierOf('tz_mismatch')).toBe('strict');
   });
-  it('never holds visits that came from somewhere else or carry campaign tags', () => {
-    expect(r('https://enewspf.com/story', ['tz_mismatch'], 'https://www.google.com/')).toBeNull();
-    expect(r('https://enewspf.com/story?utm_source=newsletter', ['tz_mismatch'])).toBeNull();
-    expect(r('https://enewspf.com/page/99?fbclid=x')).toBeNull();
+  it('holds any other new visit on a computer lightly, and lets phones through', () => {
+    expect(reason([], { path: '/page/3' })).toBe('new_desktop');
+    expect(tierOf('new_desktop')).toBe('light');
+    expect(reason([], { device: 'Mobile', os: 'Android' })).toBeNull();
+    expect(reason(['old_script'], { device: 'Mobile', os: 'iOS' })).toBeNull();
   });
-  it('treats a referrer from the same site as Direct', () => {
-    expect(r('https://enewspf.com/story', ['tz_mismatch'], 'https://www.enewspf.com/')).toBe('tz_mismatch');
+});
+
+describe('the hold: what counts a held visit', () => {
+  const h = (reason: string, visible: number, engaged = 0) => releasedBy({ reason, visible, engaged });
+  it('light: any interaction or any time on screen', () => {
+    expect(h('new_desktop', 0)).toBe(false);
+    expect(h('new_desktop', 0, 1)).toBe(true);
+    expect(h('new_desktop', 1200)).toBe(true);
+    expect(releasedByPage('new_desktop')).toBe(true);
   });
-  it('holds every brand-new Direct visit on a computer, not on a phone', () => {
-    const at = (device: string, referrer: string | null = null) =>
-      holdReason({ url: new URL('https://enewspf.com/story'), referrer, signals: [], siteHost: 'enewspf.com', device });
-    expect(at('Desktop')).toBe('new_desktop');
-    expect(at('Mobile')).toBeNull();
-    expect(at('Desktop', 'https://news.google.com/')).toBeNull();
+  it('strict: an interaction plus 3s on screen, or 15s on screen', () => {
+    expect(h('tz_mismatch', 0, 1)).toBe(false); // scripted mouse move, then gone
+    expect(h('tz_mismatch', 3500, 1)).toBe(true);
+    expect(h('tz_mismatch', 14000)).toBe(false);
+    expect(h('tz_mismatch', 15500)).toBe(true);
+    expect(releasedByPage('tz_mismatch')).toBe(false);
   });
-  it('lets ordinary Direct visits on phones through', () => {
-    expect(r('https://enewspf.com/story', ['old_script'])).toBeNull();
+  it('automated: only a login', () => {
+    expect(h('automated', 60000, 1)).toBe(false);
+    expect(releasedByEvent('automated', 'outbound')).toBe(false);
+    expect(releasedByEvent('automated', 'identify')).toBe(true);
+    expect(releasedByEvent('tz_mismatch', 'outbound')).toBe(true);
+    expect(releasedByEvent('new_desktop', 'goal')).toBe(false);
   });
 });

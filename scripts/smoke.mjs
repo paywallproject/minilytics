@@ -23,9 +23,12 @@ async function call(path, opts = {}) {
   return { status: res.status, body };
 }
 
-const ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36';
+// A current Chrome on a phone with its client hints, so the hold (lib/hold.ts) counts its visits straight away
+// (a new visit on a computer waits for a sign someone saw the page). 131 shipped 2024-11-12, then one every 4 weeks.
+const chromeNow = 131 + Math.floor((Date.now() - Date.UTC(2024, 10, 12)) / (28 * 86_400_000));
+const ua = `Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeNow}.0 Mobile Safari/537.36`;
 const event = (siteId, payload) =>
-  fetch(BASE + '/api/event', { method: 'POST', headers: { 'content-type': 'text/plain', 'user-agent': ua }, body: JSON.stringify({ w: siteId, ...payload }) });
+  fetch(BASE + '/api/event', { method: 'POST', headers: { 'content-type': 'text/plain', 'user-agent': ua, 'sec-ch-ua': `"Chromium";v="${chromeNow}"` }, body: JSON.stringify({ w: siteId, ...payload }) });
 
 assert((await call('/api/sites')).status === 401, 'dashboard API needs login');
 assert((await call('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'nope' }) })).status === 401, 'wrong password rejected');

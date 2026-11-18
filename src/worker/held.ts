@@ -31,7 +31,7 @@ export async function heldReport(ctx: Ctx) {
       .bind(...bind),
     db
       .prepare(
-        `SELECT CASE WHEN engaged = 1 AND visible >= 3000 THEN 'interacted + 3s' WHEN visible >= 15000 THEN '15s on screen' ELSE 'login or click out' END AS label,
+        `SELECT CASE WHEN engaged = 1 THEN 'interacted' WHEN visible > 0 THEN 'time on screen' ELSE 'second page, login or click out' END AS label,
            COUNT(*) AS n FROM held_visits WHERE ${where} AND released_at IS NOT NULL GROUP BY 1 ORDER BY n DESC`,
       )
       .bind(...bind),
