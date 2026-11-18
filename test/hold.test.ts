@@ -40,9 +40,9 @@ describe('the hold: what counts a held visit', () => {
     expect(h('new_desktop_far', 15500, 1)).toBe(true);
     expect(releasedByPage('new_desktop_far')).toBe(true);
   });
-  it('strict: an interaction plus 3s on screen, or 15s on screen', () => {
+  it('strict: 15s on screen; a touch plus a few seconds is not enough', () => {
     expect(h('tz_mismatch', 0, 1)).toBe(false); // scripted mouse move, then gone
-    expect(h('tz_mismatch', 3500, 1)).toBe(true);
+    expect(h('tz_mismatch', 3500, 1)).toBe(false); // scripted mouse move 7.5s in, gone at 3.5s (Newtown CT)
     expect(h('tz_mismatch', 14000)).toBe(false);
     expect(h('tz_mismatch', 15500)).toBe(true);
     expect(releasedByPage('tz_mismatch')).toBe(false);
