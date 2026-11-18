@@ -83,7 +83,9 @@
       return u.toString();
     } catch (e) { return href; }
   }
+  var lastPageviewAt = 0;
   function send(type, extra, beacon) {
+    if (type === 'pageview') lastPageviewAt = Date.now();
     // While a pageview is held, other events wait with it: a goal can fire on its own when the page loads (the
     // PaywallProject plugin reports "paywall shown" on every article, bots included), so it isn't a sign of a
     // person. Logging in is: that sends everything. Clicks get here after the pointerdown that already released.
@@ -115,7 +117,7 @@
     if (d.visibilityState === 'visible') visibleSince = Date.now();
     else flushTime(true);
   });
-  w.addEventListener('pagehide', function () { flushTime(true); });
+  w.addEventListener('pagehide', function () { sendEngage(); flushTime(true); });
   setInterval(function () {
     if (d.visibilityState === 'visible' && pings < 30) { pings++; flushTime(false); }
   }, 60000);
@@ -172,7 +174,19 @@
     // Which interaction came first and how long after the page started loading (helps tell scripts from people).
     var ms;
     try { ms = Math.round(w.performance.now()); } catch (x) {}
-    send('engage', { p: { k: e && e.type, ms: ms } }, true);
+    // Sent a moment after the pageview, so it doesn't overtake it (the mouse often moves as the page loads); sent at
+    // once if the page closes first.
+    engageMsg = { p: { k: e && e.type, ms: ms } };
+    var wait = Math.max(0, lastPageviewAt + 800 - Date.now());
+    if (wait) setTimeout(sendEngage, wait);
+    else sendEngage();
+  }
+  var engageMsg = null;
+  function sendEngage() {
+    if (!engageMsg) return;
+    var m = engageMsg;
+    engageMsg = null;
+    send('engage', m, true);
   }
   ENGAGE.forEach(function (t) { w.addEventListener(t, onEngage, { capture: true, passive: true }); });
   var hist = w.history;

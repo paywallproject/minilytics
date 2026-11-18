@@ -120,13 +120,19 @@ export async function handleEvent(c: Context<AppEnv>) {
         )
         .bind(site.id, body.sid, now, raw, signals.join(',') || null, reason, heldMeta(ua, body, geoOf(c)))
         .run();
+      // An interaction that arrived before this pageview (see below) may already be enough.
+      if (open?.engaged) {
+        const row = { ...open, reason, ts: now, body: raw, signals: signals.join(',') || null };
+        if (releasedBy(row)) await release(db, site, row, ua, geoOf(c), now);
+      }
       return c.body(null, 202);
     }
     if (open) {
-      // Not held after all: record the pageview, then the goals that came before it.
+      // Not held after all: record the pageview, then what came before it (goals, an interaction).
       await db.prepare('DELETE FROM held_visits WHERE site_id = ? AND session_id = ?').bind(site.id, body.sid).run();
       await ingest(db, site, body, url, ua, geoOf(c), now, signals.join(',') || null);
       for (const q of queuedOf(open.queued)) await ingest(db, site, q.body, new URL(q.body.u), ua, geoOf(c), q.ts);
+      if (open.engaged) await ingest(db, site, { ...body, t: 'engage', p: { k: open.engage_kind, ms: open.engage_ms } }, url, ua, geoOf(c), now);
       return c.body(null, 202);
     }
   } else if (body.t === 'ping') {
@@ -157,9 +163,16 @@ export async function handleEvent(c: Context<AppEnv>) {
       .bind(site.id, body.sid)
       .first<HeldRow>();
     if (held?.reason === EARLY) {
-      // Its pageview hasn't arrived yet: keep further goals with it, let anything else through.
+      // Its pageview hasn't arrived yet: keep further goals and the first interaction with it.
       if (body.t === 'goal') {
         await queueGoal(db, site, body, now, held.queued);
+        return c.body(null, 202);
+      }
+      if (body.t === 'engage') {
+        await db
+          .prepare('UPDATE held_visits SET engaged = 1, engage_kind = COALESCE(engage_kind, ?), engage_ms = COALESCE(engage_ms, ?) WHERE site_id = ? AND session_id = ?')
+          .bind(engage.kind, engage.ms, site.id, body.sid)
+          .run();
         return c.body(null, 202);
       }
     } else if (held && body.t === 'engage') {
@@ -182,15 +195,19 @@ export async function handleEvent(c: Context<AppEnv>) {
       }
       // A person after all (logged in, or clicked out): record the held pageview and goals, then this event.
       await release(db, site, held, ua, geoOf(c), now);
-    } else if (body.t === 'goal' && !(await db.prepare('SELECT 1 FROM sessions WHERE site_id = ? AND id = ?').bind(site.id, body.sid).first())) {
-      // A goal before its visit's first pageview (sites fire "paywall shown" early, and the enewspf crawler's arrives
-      // first): wait for the pageview, which decides whether the visit is held.
+    } else if ((body.t === 'goal' || body.t === 'engage') && !(await db.prepare('SELECT 1 FROM sessions WHERE site_id = ? AND id = ?').bind(site.id, body.sid).first())) {
+      // A goal or interaction before its visit's first pageview: sites fire "paywall shown" early (the enewspf
+      // crawler's arrives first), and on a computer the mouse often moves as the page loads, so the interaction can
+      // overtake the pageview. Keep it until the pageview arrives (which decides whether the visit is held); before
+      // this, such interactions were lost, which made real readers look like they never touched the page.
+      const isGoal = body.t === 'goal';
       await db
         .prepare(
-          `INSERT INTO held_visits (site_id, session_id, ts, body, signals, reason, queued) VALUES (?, ?, ?, '{}', NULL, ?, ?)
+          `INSERT INTO held_visits (site_id, session_id, ts, body, signals, reason, queued, engaged, engage_kind, engage_ms)
+           VALUES (?, ?, ?, '{}', NULL, ?, ?, ?, ?, ?)
            ON CONFLICT (site_id, session_id) DO NOTHING`,
         )
-        .bind(site.id, body.sid, now, EARLY, JSON.stringify([{ ts: now, body }]))
+        .bind(site.id, body.sid, now, EARLY, isGoal ? JSON.stringify([{ ts: now, body }]) : null, isGoal ? 0 : 1, engage.kind, engage.ms)
         .run();
       return c.body(null, 202);
     }

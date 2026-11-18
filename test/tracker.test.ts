@@ -6,6 +6,7 @@ const SRC = readFileSync(new URL('../public/js/script.js', import.meta.url), 'ut
 /** Runs the tracker in a tiny fake browser and returns what it sent plus a way to fire events. */
 function run(opts: { referrer?: string; search?: string; cookie?: string; attrs?: Record<string, string>; optIn?: boolean } = {}) {
   const sent: any[] = [];
+  const timers: (() => void)[] = [];
   const listeners: Record<string, ((e: any) => void)[]> = {};
   let cookie = opts.cookie ?? '';
   const attrs: Record<string, string> = { 'data-website-id': 'site12345', ...(opts.optIn === false ? {} : { 'data-require-interaction': '' }), ...opts.attrs };
@@ -37,8 +38,12 @@ function run(opts: { referrer?: string; search?: string; cookie?: string; attrs?
   const fetch = (_u: string, o: any) => { sent.push(JSON.parse(o.body)); return Promise.resolve(); };
   new Function('window', 'document', 'fetch', 'setInterval', 'setTimeout', 'localStorage', 'URL', 'URLSearchParams', 'Intl', 'crypto', 'Blob', 'MutationObserver', 'screen',
     SRC,
-  )(window, document, fetch, () => 0, () => 0, { getItem: () => null, setItem() {}, removeItem() {} }, URL, URLSearchParams, Intl, globalThis.crypto, Blob, undefined, window.screen);
-  const fire = (t: string, trusted = true) => (listeners[t] ?? []).slice().forEach((f) => f({ isTrusted: trusted }));
+  )(window, document, fetch, () => 0, (fn: () => void) => (timers.push(fn), 0), { getItem: () => null, setItem() {}, removeItem() {} }, URL, URLSearchParams, Intl, globalThis.crypto, Blob, undefined, window.screen);
+  // Fire an event, then run what it scheduled (the interaction message waits a moment after the pageview).
+  const fire = (t: string, trusted = true) => {
+    (listeners[t] ?? []).slice().forEach((f) => f({ isTrusted: trusted, type: t }));
+    while (timers.length) timers.shift()!();
+  };
   const api = (...a: any[]) => window.minilytics(...a);
   return { sent, fire, api };
 }
