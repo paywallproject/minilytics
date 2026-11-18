@@ -10,6 +10,9 @@ import { getSite, type AppEnv } from './env';
  * Measure-only for now: the result is stored (sessions.human) but doesn't change any numbers.
  */
 
+/** How long a pass lasts: the tracker doesn't re-check a browser that passed within this time (keep in sync with script.js). */
+export const HUMAN_PASS_MS = 30 * 86_400_000;
+
 const isId = (s: unknown): s is string => typeof s === 'string' && /^[\w-]{8,64}$/.test(s);
 
 /** The page inside the hidden frame. Its address is the same for everyone (ids travel in the #fragment), so it caches. */
@@ -104,7 +107,14 @@ export async function humanResult(c: Context<AppEnv>) {
          human_reason = CASE WHEN human = 1 THEN human_reason ELSE ? END
        WHERE site_id = ? AND id = ? AND visitor_id = ?`,
     ).bind(result, detail.slice(0, 60), site.id, b.sid, b.vid),
-    ...(result === 1 ? [c.env.DB.prepare('UPDATE visitors SET human_at = ? WHERE site_id = ? AND id = ?').bind(now, site.id, b.vid)] : []),
+    // The visitor row may not exist yet (the pageview can still be on its way, or held until the reader interacts);
+    // create it so the pass is kept and carried onto the visit when it's recorded.
+    ...(result === 1
+      ? [
+          c.env.DB.prepare('INSERT OR IGNORE INTO visitors (site_id, id, first_seen) VALUES (?, ?, ?)').bind(site.id, b.vid, now),
+          c.env.DB.prepare('UPDATE visitors SET human_at = ? WHERE site_id = ? AND id = ?').bind(now, site.id, b.vid),
+        ]
+      : []),
   ]);
   return c.json({ ok: result === 1 });
 }

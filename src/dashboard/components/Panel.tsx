@@ -12,6 +12,7 @@ import { Modal } from './Modal';
 function humanReason(code: string | null | undefined): string {
   if (!code) return 'Not checked';
   if (code === 'pass') return 'Passed';
+  if (code === 'passed before') return 'Passed on an earlier visit (last 30 days)';
   if (code === 'blocked') return "Couldn't load Cloudflare's script (blocked)";
   if (code === 'timeout') return 'Timed out (left the page, or very slow)';
   if (code === 'unsupported') return 'Browser too old for the check';

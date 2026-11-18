@@ -284,9 +284,10 @@
     setTimeout(cleanup, 30000);
     (d.body || d.documentElement).appendChild(f);
   }
+  // Start right away (just after the first pageview is sent), so readers who leave within a few seconds still get
+  // checked. The frame is tiny and loads on its own, so it doesn't hold up the page.
   function scheduleHumanCheck() {
-    if (w.requestIdleCallback) w.requestIdleCallback(humanCheck, { timeout: 2000 });
-    else setTimeout(humanCheck, 500);
+    setTimeout(humanCheck, 0);
   }
 
   // ---- public API
