@@ -2,7 +2,7 @@ import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { handleEvent } from './collect';
 import { HELD_KEEP_MS } from './lib/hold';
-import { heldReport } from './held';
+import { botStudy, heldReport } from './held';
 import { forgetSite, type AppEnv, type Site } from './env';
 import { ADMIN_ID, adminEmail, clearSession, currentUser, emailLogin, googleCallback, googleStart, isHosted, requireUser, setSession, signupOpen, siteAccessSql, siteRole, type SiteRole, type User } from './auth';
 import { billingWebhook, checkout, planInfo } from './billing';
@@ -447,6 +447,14 @@ app.post('/api/admin/clients', async (c) => {
     account: { id: account.id, email, password: account.password, created: !!account.password },
     site: { ...ownerSite(site, 'admin'), created: !existing && !adminSite, moved: !!adminSite },
   });
+});
+
+// Admin research for the proxy-bot hold (see held.ts): aggregate counts, no personal data.
+app.get('/api/admin/bot-study', requireUser, async (c) => {
+  if (!c.get('user').admin) return c.json({ error: 'Not available' }, 403);
+  const from = Number(c.req.query('from')), to = Number(c.req.query('to'));
+  if (!(from > 0 && to > from && to - from <= 14 * 86_400_000)) return c.json({ error: 'from/to (ms), up to 14 days' }, 400);
+  return c.json(await botStudy(c.env.DB, from, to));
 });
 
 // Staff: the admin's teammates, who see and manage every site.

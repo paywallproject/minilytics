@@ -43,3 +43,33 @@ export async function heldReport(ctx: Ctx) {
     recent: (recent.results as { meta: string | null }[]).map((r) => ({ ...r, meta: r.meta ? JSON.parse(r.meta) : null })),
   };
 }
+
+/**
+ * Admin research: first visits of new visitors in [from, to), grouped by what the hold can see, with whether the
+ * visitor came back later or is a known reader (logged in or paid). People come back; these crawlers never do,
+ * so "came back" scores any rule's cost in real readers. Read-only, aggregate counts only.
+ */
+export async function botStudy(db: D1Database, from: number, to: number) {
+  const sites = (await db.prepare('SELECT id, domain FROM sites').all<{ id: string; domain: string }>()).results;
+  const out: Record<string, unknown[]> = {};
+  for (const site of sites) {
+    const r = await db
+      .prepare(
+        `SELECT s.channel, s.source = 'Google' AS google, s.device, s.os, s.browser, s.engaged,
+           CASE WHEN s.duration = 0 THEN '0' WHEN s.duration < 3000 THEN '1-3' WHEN s.duration < 15000 THEN '3-15' ELSE '15+' END AS dur,
+           COALESCE(s.signals, '') AS signals, s.pageviews > 1 AS multi, s.goals > 0 AS goals,
+           s.entry_page GLOB '*/page/[0-9][0-9]*' AS deep, s.entry_page = '/' AS home,
+           CASE WHEN s.entry_page GLOB '/[12][09][0-9][0-9]/*' THEN substr(s.entry_page, 2, 4) END AS year,
+           EXISTS (SELECT 1 FROM sessions s2 WHERE s2.site_id = s.site_id AND s2.visitor_id = s.visitor_id AND s2.started_at > s.started_at + 1800000) AS returned,
+           (v.email IS NOT NULL OR v.user_id IS NOT NULL OR EXISTS (SELECT 1 FROM payments p WHERE p.site_id = s.site_id AND p.visitor_id = s.visitor_id)) AS known,
+           COUNT(*) AS n
+         FROM sessions s JOIN visitors v ON v.site_id = s.site_id AND v.id = s.visitor_id
+         WHERE s.site_id = ? AND s.started_at >= ? AND s.started_at < ? AND s.started_at - v.first_seen < 60000
+         GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15`,
+      )
+      .bind(site.id, from, to)
+      .all();
+    if (r.results.length) out[site.domain] = r.results;
+  }
+  return out;
+}
