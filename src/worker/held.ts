@@ -49,8 +49,8 @@ export async function heldReport(ctx: Ctx) {
  * visitor came back later or is a known reader (logged in or paid). People come back; these crawlers never do,
  * so "came back" scores any rule's cost in real readers. Read-only, aggregate counts only.
  */
-export async function botStudy(db: D1Database, from: number, to: number) {
-  const sites = (await db.prepare('SELECT id, domain FROM sites').all<{ id: string; domain: string }>()).results;
+export async function botStudy(db: D1Database, from: number, to: number, domain?: string) {
+  const sites = (await db.prepare('SELECT id, domain FROM sites WHERE ? IS NULL OR domain = ?').bind(domain ?? null, domain ?? null).all<{ id: string; domain: string }>()).results;
   const out: Record<string, unknown[]> = {};
   for (const site of sites) {
     const r = await db
@@ -61,13 +61,13 @@ export async function botStudy(db: D1Database, from: number, to: number) {
            s.entry_page GLOB '*/page/[0-9][0-9]*' AS deep, s.entry_page = '/' AS home,
            CASE WHEN s.entry_page GLOB '/[12][09][0-9][0-9]/*' THEN substr(s.entry_page, 2, 4) END AS year,
            EXISTS (SELECT 1 FROM sessions s2 WHERE s2.site_id = s.site_id AND s2.visitor_id = s.visitor_id AND s2.started_at > s.started_at + 1800000) AS returned,
-           (v.email IS NOT NULL OR v.user_id IS NOT NULL OR EXISTS (SELECT 1 FROM payments p WHERE p.site_id = s.site_id AND p.visitor_id = s.visitor_id)) AS known,
+           (v.email IS NOT NULL OR v.user_id IS NOT NULL OR v.id IN (SELECT visitor_id FROM payments WHERE site_id = ? AND visitor_id IS NOT NULL)) AS known,
            COUNT(*) AS n
          FROM sessions s JOIN visitors v ON v.site_id = s.site_id AND v.id = s.visitor_id
          WHERE s.site_id = ? AND s.started_at >= ? AND s.started_at < ? AND s.started_at - v.first_seen < 60000
          GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15`,
       )
-      .bind(site.id, from, to)
+      .bind(site.id, site.id, from, to)
       .all();
     if (r.results.length) out[site.domain] = r.results;
   }

@@ -454,7 +454,7 @@ app.get('/api/admin/bot-study', requireUser, async (c) => {
   if (!c.get('user').admin) return c.json({ error: 'Not available' }, 403);
   const from = Number(c.req.query('from')), to = Number(c.req.query('to'));
   if (!(from > 0 && to > from && to - from <= 14 * 86_400_000)) return c.json({ error: 'from/to (ms), up to 14 days' }, 400);
-  return c.json(await botStudy(c.env.DB, from, to));
+  return c.json(await botStudy(c.env.DB, from, to, c.req.query('site') || undefined));
 });
 
 // Staff: the admin's teammates, who see and manage every site.
