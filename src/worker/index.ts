@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import { handleEvent } from './collect';
 import { HELD_KEEP_MS } from './lib/hold';
 import { botStudy, heldReport } from './held';
+import { refreshAudience, refreshSomeAudiences } from './audience';
 import { forgetSite, type AppEnv, type Site } from './env';
 import { ADMIN_ID, adminEmail, clearSession, currentUser, emailLogin, googleCallback, googleStart, isHosted, requireUser, setSession, signupOpen, siteAccessSql, siteRole, type SiteRole, type User } from './auth';
 import { billingWebhook, checkout, planInfo } from './billing';
@@ -449,6 +450,17 @@ app.post('/api/admin/clients', async (c) => {
   });
 });
 
+// Admin: recompute one site's audience now (normally the hourly cron does a few at a time).
+app.post('/api/admin/audience/:siteId', requireUser, async (c) => {
+  if (!c.get('user').admin) return c.json({ error: 'Not available' }, 403);
+  const siteId = c.req.param('siteId') ?? '';
+  await refreshAudience(c.env.DB, siteId);
+  const r = await c.env.DB.prepare('SELECT country, readers, sessions FROM site_audience WHERE site_id = ? ORDER BY readers DESC, sessions DESC LIMIT 15')
+    .bind(siteId)
+    .all();
+  return c.json(r.results);
+});
+
 // Admin research for the proxy-bot hold (see held.ts): aggregate counts, no personal data.
 app.get('/api/admin/bot-study', requireUser, async (c) => {
   if (!c.get('user').admin) return c.json({ error: 'Not available' }, 403);
@@ -706,6 +718,8 @@ export default {
   // Hourly Cron Trigger (wrangler.jsonc): sends the email reports that are due and clears old held visits.
   async scheduled(_controller: ScheduledController, env: AppEnv['Bindings'], ctx: ExecutionContext) {
     ctx.waitUntil(runScheduledReports(env));
+    // A few sites' audiences (where their real readers are, for the hold), oldest first.
+    ctx.waitUntil(refreshSomeAudiences(env.DB));
     // Held visits (see lib/hold.ts) are kept a week for checking, then deleted.
     ctx.waitUntil(env.DB.prepare('DELETE FROM held_visits WHERE ts < ?').bind(Date.now() - HELD_KEEP_MS).run());
   },

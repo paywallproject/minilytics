@@ -40,6 +40,15 @@ describe('the hold: what counts a held visit', () => {
     expect(h('tz_mismatch', 15500)).toBe(true);
     expect(releasedByPage('tz_mismatch')).toBe(false);
   });
+  it('outside the audience: an interaction plus 15s on screen, or a login', () => {
+    expect(holdReason({ url: new URL('https://news.example/story'), signals: [], device: 'Mobile', os: 'iOS', outside: true })).toBe('outside_audience');
+    expect(h('outside_audience', 15500)).toBe(false); // the Nanjing crawler: 15.5s, no interaction
+    expect(h('outside_audience', 3500, 1)).toBe(false);
+    expect(h('outside_audience', 16000, 1)).toBe(true);
+    expect(releasedByEvent('outside_audience', 'outbound')).toBe(false);
+    expect(releasedByEvent('outside_audience', 'identify')).toBe(true);
+    expect(releasedByPage('outside_audience')).toBe(false);
+  });
   it('automated: only a login', () => {
     expect(h('automated', 60000, 1)).toBe(false);
     expect(releasedByEvent('automated', 'outbound')).toBe(false);

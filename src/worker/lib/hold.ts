@@ -13,6 +13,8 @@
  *  - strict: browser timezone doesn't match the IP's location (2.2% of real readers vs 24% of one-time), old
  *    Chrome (0.3% vs 7.3%), no client hints (0.1% vs 2.8%), Linux on a computer (0.6% vs 3.5%), first page deep in
  *    an archive (0% vs 4.3%). Counted after an interaction plus 3s on screen, or 15s on screen.
+ *  - outside: from a country the site's real readers don't come from (audience.ts), any device. Counted after an
+ *    interaction plus 15s on screen, or a login. 1.0% of real readers' first visits vs 11% of one-time.
  *  - light: any other new visit on a computer. Counted after any interaction, any time on screen (the tracker
  *    reports after about a second), a second page, a login or a click out.
  * Together: 2.9% of real readers' first visits not counted (mostly visits never on screen; they're counted when
@@ -20,10 +22,11 @@
  * report time on iPhones, so they couldn't be measured fairly (re-check with the early pings).
  */
 
-export type Tier = 'automated' | 'strict' | 'light';
+export type Tier = 'automated' | 'outside' | 'strict' | 'light';
 
 const TIER: Record<string, Tier> = {
   automated: 'automated',
+  outside_audience: 'outside',
   tz_mismatch: 'strict',
   old_browser: 'strict',
   linux_desktop: 'strict',
@@ -34,10 +37,13 @@ const TIER: Record<string, Tier> = {
 export const tierOf = (reason: string): Tier => TIER[reason] ?? 'strict';
 
 /** Why a brand-new visitor's first visit is held, or null to count it straight away. */
-export function holdReason(input: { url: URL; signals: string[]; device?: string; os?: string }): string | null {
+export function holdReason(input: { url: URL; signals: string[]; device?: string; os?: string; outside?: boolean }): string | null {
   const { url, signals } = input;
   const has = (s: string) => signals.includes(s);
   if (has('headless') || (has('no_client_hints') && has('old_chrome'))) return 'automated';
+  // From a country the site's real readers don't come from (audience.ts), on any device: the Nanjing crawler on
+  // enewspf carries no other sign and keeps each page open 15s+.
+  if (input.outside) return 'outside_audience';
   if (has('tz_mismatch')) return 'tz_mismatch';
   if (has('old_chrome') || has('no_client_hints')) return 'old_browser';
   if (input.os === 'Linux' && input.device === 'Desktop') return 'linux_desktop';
@@ -60,6 +66,8 @@ export function releasedBy(held: { reason: string; visible: number; engaged: num
   switch (tierOf(held.reason)) {
     case 'automated':
       return false;
+    case 'outside':
+      return !!held.engaged && held.visible >= STRICT_VISIBLE_MS;
     case 'strict':
       return (!!held.engaged && held.visible >= STRICT_ENGAGED_MS) || held.visible >= STRICT_VISIBLE_MS;
     case 'light':
@@ -70,7 +78,7 @@ export function releasedBy(held: { reason: string; visible: number; engaged: num
 /** Events that count a held visit on their own: logging in always; clicking a link out unless automated. */
 export function releasedByEvent(reason: string, type: string): boolean {
   if (type === 'identify') return true;
-  return type === 'outbound' && tierOf(reason) !== 'automated';
+  return type === 'outbound' && tierOf(reason) !== 'automated' && tierOf(reason) !== 'outside';
 }
 
 /** A second page counts a light hold (people click through; these crawlers load one page). */

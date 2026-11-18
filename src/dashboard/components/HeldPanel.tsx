@@ -24,6 +24,7 @@ interface HeldReport {
 
 const REASONS: Record<string, string> = {
   automated: 'Automated browser',
+  outside_audience: "Country outside the site's readers",
   tz_mismatch: 'Timezone ≠ location',
   old_browser: 'Outdated / incomplete Chrome',
   linux_desktop: 'Linux computer',
