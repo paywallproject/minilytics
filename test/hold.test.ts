@@ -21,7 +21,14 @@ describe('server-side hold for proxy bots', () => {
   it('treats a referrer from the same site as Direct', () => {
     expect(r('https://enewspf.com/story', ['tz_mismatch'], 'https://www.enewspf.com/')).toBe('tz_mismatch');
   });
-  it('lets ordinary Direct visits through', () => {
+  it('holds every brand-new Direct visit on a computer, not on a phone', () => {
+    const at = (device: string, referrer: string | null = null) =>
+      holdReason({ url: new URL('https://enewspf.com/story'), referrer, signals: [], siteHost: 'enewspf.com', device });
+    expect(at('Desktop')).toBe('new_desktop');
+    expect(at('Mobile')).toBeNull();
+    expect(at('Desktop', 'https://news.google.com/')).toBeNull();
+  });
+  it('lets ordinary Direct visits on phones through', () => {
     expect(r('https://enewspf.com/story', ['old_script'])).toBeNull();
   });
 });

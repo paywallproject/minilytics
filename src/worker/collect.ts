@@ -6,7 +6,7 @@ import { getSite, type AppEnv, type Site } from './env';
 import { isOwnerVisit } from './owner';
 import { isHostingAsn } from './lib/datacenter';
 import { botSignals } from './lib/signals';
-import { HOLD_MS, holdReason, RELEASE_VISIBLE_MS, RELEASES } from './lib/hold';
+import { HOLD_MS, holdReason, NO_TIME_RELEASE, RELEASE_VISIBLE_MS, RELEASES } from './lib/hold';
 import { isBot, isSpamReferrer, parseUA } from './lib/ua';
 import { creditedSessionSql, dodoProductOfLink, firstTouchSessionSql, learnDodoProducts } from './payments';
 
@@ -85,7 +85,7 @@ export async function handleEvent(c: Context<AppEnv>) {
 
   // Proxy bots: a brand-new Direct visit with a bot sign waits (see lib/hold.ts) until the reader shows up.
   if (body.t === 'pageview') {
-    const reason = holdReason({ url, referrer: body.r, signals, siteHost: site.domain });
+    const reason = holdReason({ url, referrer: body.r, signals, siteHost: site.domain, device: parseUA(ua, Number(body.sw) || undefined).device });
     if (reason) {
       const [ses, vis] = await db.batch([
         db.prepare('SELECT 1 FROM sessions WHERE site_id = ? AND id = ?').bind(site.id, body.sid),
@@ -115,7 +115,7 @@ export async function handleEvent(c: Context<AppEnv>) {
       .prepare('UPDATE held_visits SET visible = visible + ? WHERE site_id = ? AND session_id = ? RETURNING ts, body, signals, queued, visible')
       .bind(ms, site.id, body.sid)
       .first<HeldRow & { visible: number }>();
-    if (held && held.visible >= RELEASE_VISIBLE_MS) {
+    if (held && held.visible >= RELEASE_VISIBLE_MS && !NO_TIME_RELEASE.test(held.signals ?? '')) {
       await release(db, site, held, ua, geoOf(c));
       await ingest(db, site, { ...body, d: held.visible }, url, ua, geoOf(c), now);
     }
