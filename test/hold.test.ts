@@ -62,10 +62,14 @@ describe('the hold: what counts a held visit', () => {
     expect(holdReason({ url: new URL('https://news.example/story'), signals: [], device: 'Mobile', os: 'iOS', outside: true })).toBe('outside_audience');
     expect(h('outside_audience', 15500)).toBe(false); // the Nanjing crawler: 15.5s, no interaction
     expect(h('outside_audience', 3500, 1)).toBe(false);
-    expect(h('outside_audience', 16000, 1)).toBe(true);
+    expect(releasedBy({ reason: 'outside_audience', visible: 16000, engaged: 1, act_secs: 3 })).toBe(true);
     // The Nanjing crawler: mouse moved 35s after loading, 15.5s on screen.
     expect(releasedBy({ reason: 'outside_audience', visible: 15500, engaged: 1, engage_ms: 34901 })).toBe(false);
-    expect(releasedBy({ reason: 'outside_audience', visible: 15500, engaged: 1, engage_ms: 2100 })).toBe(true);
+    expect(releasedBy({ reason: 'outside_audience', visible: 15500, engaged: 1, engage_ms: 2100, act_secs: 6 })).toBe(true);
+    // The Jiangsu crawler: one scripted touch in time, but all its input in a single second.
+    expect(releasedBy({ reason: 'outside_audience', visible: 15500, engaged: 1, engage_ms: 2100, act_secs: 1 })).toBe(false);
+    expect(releasedBy({ reason: 'outside_audience', visible: 15500, engaged: 1, engage_ms: 2100 })).toBe(false); // not reported
+    expect(releasedBy({ reason: 'outside_audience', visible: 15500, engaged: 1, engage_ms: 2100, act_secs: 2 })).toBe(true);
     expect(releasedByEvent('outside_audience', 'outbound')).toBe(false);
     expect(releasedByEvent('outside_audience', 'identify')).toBe(true);
     expect(releasedByPage('outside_audience')).toBe(false);

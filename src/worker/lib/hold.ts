@@ -15,7 +15,7 @@
  *    an archive (0% vs 4.3%). Counted after 15s on screen (a touch alone isn't enough: the crawler fakes one); on a
  *    computer, 15s on screen plus an interaction.
  *  - outside: from a country the site's real readers don't come from (audience.ts), any device. Counted after an
- *    interaction within 15s of loading plus 15s on screen, or a login. 1.0% of real readers' first visits vs 11%
+ *    interaction within 15s of loading, input in 2+ separate seconds, and 15s on screen, or a login. 1.0% of real readers' first visits vs 11%
  *    of one-time.
  *  - light: any other new visit on a computer. Inside the site's home region (state, audience.ts inHomeRegion): an
  *    interaction plus 5s on screen. Outside it: an interaction plus 15s on screen. Either: a second page after an
@@ -72,12 +72,26 @@ export const STRICT_VISIBLE_MS = 15_000;
  */
 export const OUTSIDE_FIRST_TOUCH_MS = 15_000; // on-screen time before the first touch (tracker's p.v), when sent
 
-export function releasedBy(held: { reason: string; visible: number; engaged: number; engage_ms?: number | null; device?: string | null }): boolean {
+/**
+ * Outside the audience, the input must also fall in at least this many separate seconds (tracker's activity count,
+ * act_secs). A Mac crawler from Jiangsu, CN was counted 3 times on enewspf (2026-11-18) after one scripted touch: all
+ * its input in a single second. Scored 11:20-16:00 UTC on every site: counted computer visits from outside the US
+ * with input in at most 1 second were 5, all one-time, none came back; real readers scroll or move the mouse across
+ * many seconds (most counted visits had input in 8+).
+ */
+export const OUTSIDE_ACT_SECS = 2;
+
+export function releasedBy(held: { reason: string; visible: number; engaged: number; engage_ms?: number | null; device?: string | null; act_secs?: number | null }): boolean {
   switch (tierOf(held.reason)) {
     case 'automated':
       return false;
     case 'outside':
-      return !!held.engaged && held.visible >= STRICT_VISIBLE_MS && (held.engage_ms == null || held.engage_ms <= OUTSIDE_FIRST_TOUCH_MS);
+      return (
+        !!held.engaged &&
+        held.visible >= STRICT_VISIBLE_MS &&
+        (held.engage_ms == null || held.engage_ms <= OUTSIDE_FIRST_TOUCH_MS) &&
+        (held.act_secs ?? 0) >= OUTSIDE_ACT_SECS
+      );
     case 'strict':
       // 15s on the page, touched or not. A touch plus a few seconds used to count, but the crawler now sends one
       // scripted mouse move 6-9s in and leaves at 3.5s (e.g. Newtown CT, timezone mismatch, on enewspf). Scored:
