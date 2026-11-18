@@ -65,7 +65,7 @@ export async function botStudy(db: D1Database, from: number, to: number, domain?
   for (const site of sites) {
     const r = await db
       .prepare(
-        `SELECT s.channel, s.source = 'Google' AS google, s.device, s.os, s.browser, s.engaged,
+        `SELECT s.country, s.channel, s.source = 'Google' AS google, s.device, s.os, s.browser, s.engaged,
            CASE WHEN s.duration = 0 THEN '0' WHEN s.duration < 3000 THEN '1-3' WHEN s.duration < 15000 THEN '3-15' ELSE '15+' END AS dur,
            COALESCE(s.signals, '') AS signals, s.pageviews > 1 AS multi, s.goals > 0 AS goals,
            s.entry_page GLOB '*/page/[0-9][0-9]*' AS deep, s.entry_page = '/' AS home,
@@ -75,7 +75,7 @@ export async function botStudy(db: D1Database, from: number, to: number, domain?
            COUNT(*) AS n
          FROM sessions s JOIN visitors v ON v.site_id = s.site_id AND v.id = s.visitor_id
          WHERE s.site_id = ? AND s.started_at >= ? AND s.started_at < ? AND s.started_at - v.first_seen < 60000
-         GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15`,
+         GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16`,
       )
       .bind(site.id, site.id, from, to)
       .all();
