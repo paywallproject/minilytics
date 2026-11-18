@@ -30,6 +30,9 @@ interface Payload {
   v?: number;
   /** The browser's timezone (pageviews only). */
   tz?: string;
+  /** Hash of the browser setup, and 1 if graphics are drawn in software (a new visit's first pageview). */
+  fl?: string;
+  gs?: number;
 }
 
 const clip = (s: unknown, n = 255): string | null =>
@@ -83,6 +86,7 @@ export async function handleEvent(c: Context<AppEnv>) {
         })
       : [];
   if (body.t === 'pageview' && body.v === undefined) signals.push('old_script');
+  if (body.t === 'pageview' && body.gs === 1) signals.push('soft_gpu'); // measuring only
   const db = c.env.DB;
 
   // Fingerprint's open-source bot detector (BotD) ran in the browser: record its verdict on the visit, whether it was
@@ -133,11 +137,11 @@ export async function handleEvent(c: Context<AppEnv>) {
       // Goals that arrived before this pageview (see below) stay queued with it.
       await db
         .prepare(
-          `INSERT INTO held_visits (site_id, session_id, ts, body, signals, reason, meta) VALUES (?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO held_visits (site_id, session_id, ts, body, signals, reason, meta, fleet) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (site_id, session_id) DO UPDATE SET ts = excluded.ts, body = excluded.body, signals = excluded.signals,
-             reason = excluded.reason, meta = excluded.meta`,
+             reason = excluded.reason, meta = excluded.meta, fleet = excluded.fleet`,
         )
-        .bind(site.id, body.sid, now, raw, signals.join(',') || null, reason, heldMeta(ua, body, geoOf(c)))
+        .bind(site.id, body.sid, now, raw, signals.join(',') || null, reason, heldMeta(ua, body, geoOf(c)), fleetOf(body))
         .run();
       // An interaction that arrived before this pageview (see below) may already be enough.
       if (open?.engaged) {
@@ -262,6 +266,9 @@ interface HeldRow {
 }
 
 const queuedOf = (q: string | null) => (q ? JSON.parse(q) : []) as { ts: number; body: Payload }[];
+
+/** The browser-setup hash from a new visit's first pageview, if valid. */
+const fleetOf = (body: Payload): string | null => (typeof body.fl === 'string' && /^[0-9a-f]{8}$/.test(body.fl) ? body.fl : null);
 
 /** Activity counts from an early ping ("events.seconds"), or nulls. */
 function activityOf(body: Payload): { events: number | null; secs: number | null } {
@@ -606,8 +613,8 @@ function newSession(
       .prepare(
         `INSERT OR IGNORE INTO sessions (site_id, id, visitor_id, started_at, last_seen_at, pageviews, hostname, entry_page, exit_page,
           referrer, referrer_domain, source, channel, utm_source, utm_medium, utm_campaign, utm_term, utm_content, ref,
-          country, region, city, browser, os, device, lat, lon, signals, network)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          country, region, city, browser, os, device, lat, lon, signals, network, fleet)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         site.id,
@@ -638,6 +645,7 @@ function newSession(
         geo.lon,
         signals,
         geo.network,
+        fleetOf(body),
       ),
     // Separate statement so concurrent first events (pageview + goal racing) never double count.
     ...(pageviews

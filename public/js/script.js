@@ -147,6 +147,7 @@
     lastPage = page;
     pings = 0;
     var data = { r: firstView ? d.referrer : '', tz: firstView ? timeZone() : undefined };
+    if (firstView && newSession) { var f = fleet(); data.fl = f[0]; if (f[1]) data.gs = 1; }
     // A new visit with no referrer and no campaign tags is where page-loading bots hide (they arrive "Direct" and
     // never touch the page). Hold its pageview until the first sign of a person: moving the mouse, scrolling,
     // tapping, clicking or typing. Visits from anywhere else are counted straight away. Only on sites that opt in.
@@ -169,6 +170,29 @@
     queued = [];
     if (data) send('pageview', data);
     for (var i = 0; i < q.length; i++) send(q[i][0], q[i][1], q[i][2]);
+  }
+  // A short hash of the browser setup, on a new visit's first page (measuring only): crawlers on residential proxies
+  // change IP and town on every visit but run on a few identical machines. Also whether graphics are drawn in
+  // software (common on servers and virtual machines, rare on readers' devices).
+  function fleet() {
+    var parts = [], soft = 0;
+    try {
+      var sc = w.screen || {};
+      parts.push(sc.width + 'x' + sc.height, sc.availWidth + 'x' + sc.availHeight, sc.colorDepth, w.devicePixelRatio,
+        nav.hardwareConcurrency, nav.deviceMemory, nav.maxTouchPoints, (nav.languages || []).join(','), nav.platform, timeZone());
+      var cv = d.createElement('canvas'), gl = cv.getContext('webgl') || cv.getContext('experimental-webgl');
+      if (gl) {
+        var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+        var r = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+        parts.push(r, dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : '');
+        soft = /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(r) ? 1 : 0;
+        var lose = gl.getExtension('WEBGL_lose_context');
+        if (lose) lose.loseContext();
+      } else parts.push('nogl');
+    } catch (e) { parts.push('err'); }
+    var str = parts.join('|'), h = 0x811c9dc5;
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return [('0000000' + h.toString(16)).slice(-8), soft];
   }
   function timeZone() {
     try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return undefined; }

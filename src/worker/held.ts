@@ -92,3 +92,32 @@ export async function botStudy(db: D1Database, from: number, to: number, domain?
   }
   return out;
 }
+
+/**
+ * Admin research: browser setups (fleet hash) of new visitors in [from, to) on one site, with how many visitors and
+ * towns each covers, whether any came back or are known readers, and how many more were held and never counted. A
+ * crawler fleet shows as one setup across many towns with nobody coming back. Read-only, aggregate counts only.
+ */
+export async function fleetStudy(db: D1Database, siteId: string, from: number, to: number) {
+  const [counted, held] = await db.batch([
+    db
+      .prepare(
+        `SELECT s.fleet, s.device, s.os, s.browser, COUNT(*) AS n, COUNT(DISTINCT s.city) AS towns,
+           SUM(EXISTS (SELECT 1 FROM sessions s2 WHERE s2.site_id = s.site_id AND s2.visitor_id = s.visitor_id AND s2.started_at > s.started_at + 1800000)) AS returned,
+           SUM(v.email IS NOT NULL OR v.user_id IS NOT NULL) AS known, SUM(s.engaged) AS engaged,
+           SUM(s.signals LIKE '%soft_gpu%') AS soft_gpu
+         FROM sessions s JOIN visitors v ON v.site_id = s.site_id AND v.id = s.visitor_id
+         WHERE s.site_id = ? AND s.started_at >= ? AND s.started_at < ? AND s.fleet IS NOT NULL AND s.started_at - v.first_seen < 60000
+         GROUP BY 1, 2, 3, 4 ORDER BY n DESC LIMIT 100`,
+      )
+      .bind(siteId, from, to),
+    db
+      .prepare(
+        `SELECT fleet, COUNT(*) AS n, COUNT(DISTINCT json_extract(meta, '$.city')) AS towns, SUM(signals LIKE '%soft_gpu%') AS soft_gpu
+         FROM held_visits WHERE site_id = ? AND ts >= ? AND ts < ? AND fleet IS NOT NULL AND released_at IS NULL
+         GROUP BY 1 ORDER BY n DESC LIMIT 100`,
+      )
+      .bind(siteId, from, to),
+  ]);
+  return { counted: counted.results, held: held.results };
+}

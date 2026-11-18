@@ -2,7 +2,7 @@ import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { handleEvent } from './collect';
 import { HELD_KEEP_MS } from './lib/hold';
-import { botStudy, heldReport } from './held';
+import { botStudy, fleetStudy, heldReport } from './held';
 import { refreshAudience, refreshSomeAudiences } from './audience';
 import { forgetSite, type AppEnv, type Site } from './env';
 import { ADMIN_ID, adminEmail, clearSession, currentUser, emailLogin, googleCallback, googleStart, isHosted, requireUser, setSession, signupOpen, siteAccessSql, siteRole, type SiteRole, type User } from './auth';
@@ -469,6 +469,13 @@ app.get('/api/admin/bot-study', requireUser, async (c) => {
   return c.json(await botStudy(c.env.DB, from, to, c.req.query('site') || undefined));
 });
 
+app.get('/api/admin/fleet', requireUser, async (c) => {
+  if (!c.get('user').admin) return c.json({ error: 'Not available' }, 403);
+  const from = Number(c.req.query('from')), to = Number(c.req.query('to')), site = c.req.query('site');
+  if (!site || !(from > 0 && to > from && to - from <= 7 * 86_400_000)) return c.json({ error: 'site, from/to (ms), up to 7 days' }, 400);
+  return c.json(await fleetStudy(c.env.DB, site, from, to));
+});
+
 // Staff: the admin's teammates, who see and manage every site.
 app.get('/api/admin/staff', listStaff);
 app.post('/api/admin/staff', addStaff);
@@ -601,7 +608,7 @@ app.delete('/api/sites/:id', async (c) => {
 app.get('/api/sites/:id/overview', async (c) => c.json(await overview(await makeCtx(c))));
 
 // Bot-check dimensions under evaluation: only admins and staff see them.
-const ADMIN_DIMS = new Set(['signals', 'engaged', 'network', 'engage_kind', 'engage_delay', 'botd', 'activity']);
+const ADMIN_DIMS = new Set(['signals', 'engaged', 'network', 'engage_kind', 'engage_delay', 'botd', 'activity', 'fleet']);
 app.get('/api/sites/:id/breakdown', async (c) => {
   if (ADMIN_DIMS.has(c.req.query('dim') ?? '') && c.get('role') !== 'admin') return c.json({ error: 'Not available' }, 403);
   try {

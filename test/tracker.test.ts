@@ -57,6 +57,7 @@ describe('tracker: Direct visits wait for a sign of a person', () => {
     t.fire('scroll');
     expect(t.sent.map((e) => e.t)).toEqual(['pageview', 'engage']);
     expect(t.sent[0].u).toBe('https://news.example/story');
+    expect(t.sent[0].fl).toMatch(/^[0-9a-f]{8}$/); // browser-setup hash on a new visit's first page
   });
   it('counts visits with a referrer, campaign tags or an existing session straight away', () => {
     expect(run({ referrer: 'https://www.google.com/' }).sent.map((e) => e.t)).toEqual(['pageview']);
