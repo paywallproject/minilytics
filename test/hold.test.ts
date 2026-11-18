@@ -27,18 +27,22 @@ describe('the hold: which first visits wait', () => {
 
 describe('the hold: what counts a held visit', () => {
   const h = (reason: string, visible: number, engaged = 0) => releasedBy({ reason, visible, engaged });
-  it('light: any interaction or any time on screen', () => {
+  it('light: an interaction plus 5s on screen, or a second page after an interaction', () => {
     expect(h('new_desktop', 0)).toBe(false);
-    expect(h('new_desktop', 0, 1)).toBe(true);
-    expect(h('new_desktop', 1200)).toBe(true);
-    expect(releasedByPage('new_desktop')).toBe(true);
+    expect(h('new_desktop', 0, 1)).toBe(false);
+    expect(h('new_desktop', 3500, 1)).toBe(false); // Chicago crawler: mouse move 10.6s in, gone before 15s
+    expect(h('new_desktop', 60000)).toBe(false);
+    expect(h('new_desktop', 5000, 1)).toBe(true);
+    expect(releasedByPage('new_desktop', 1)).toBe(true);
+    expect(releasedByPage('new_desktop', 0)).toBe(false); // Gardner crawler: second page, never touched
   });
   it('light, outside the home region: an interaction plus 15s, or a second page; not time or a touch alone', () => {
     expect(holdReason({ url: new URL('https://news.example/story'), signals: [], device: 'Desktop', os: 'Windows', far: true })).toBe('new_desktop_far');
     expect(h('new_desktop_far', 74000)).toBe(false); // sat on the page 1m14s without touching it
     expect(h('new_desktop_far', 3500, 1)).toBe(false); // one scripted mouse move 9s in, gone at 3.5s on screen
     expect(h('new_desktop_far', 15500, 1)).toBe(true);
-    expect(releasedByPage('new_desktop_far')).toBe(true);
+    expect(releasedByPage('new_desktop_far', 1)).toBe(true);
+    expect(releasedByPage('new_desktop_far', 0)).toBe(false);
   });
   it('strict: 15s on screen; a touch plus a few seconds is not enough', () => {
     expect(h('tz_mismatch', 0, 1)).toBe(false); // scripted mouse move, then gone

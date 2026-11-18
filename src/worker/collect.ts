@@ -114,7 +114,7 @@ export async function handleEvent(c: Context<AppEnv>) {
       // A further page in a held visit. A light hold counts it (people click through, these crawlers load one page);
       // otherwise it's still held, and the page is kept so it's recorded if the visit is counted later (a reader's
       // second page can arrive just before the report from the first page that counts the visit).
-      if (!releasedByPage(open.reason)) {
+      if (!releasedByPage(open.reason, open.engaged)) {
         await queueGoal(db, site, body, now, open.queued);
         return c.body(null, 202);
       }
@@ -272,7 +272,9 @@ async function queueGoal(db: D1Database, site: Site, body: Payload, now: number,
 function engageOf(body: Payload): { kind: string | null; ms: number | null } {
   if (body.t !== 'engage' || !body.p) return { kind: null, ms: null };
   const k = typeof body.p.k === 'string' && /^[a-z]{3,20}$/.test(body.p.k) ? body.p.k : null;
-  const ms = Number(body.p.ms);
+  // On-screen time before the interaction when the tracker sends it (time in another tab or app doesn't count),
+  // otherwise time since the page started loading.
+  const ms = Number(body.p.v ?? body.p.ms);
   return { kind: k, ms: Number.isFinite(ms) && ms >= 0 ? Math.min(Math.round(ms), 86_400_000) : null };
 }
 

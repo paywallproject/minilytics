@@ -17,10 +17,9 @@
  *  - outside: from a country the site's real readers don't come from (audience.ts), any device. Counted after an
  *    interaction within 15s of loading plus 15s on screen, or a login. 1.0% of real readers' first visits vs 11%
  *    of one-time.
- *  - light: any other new visit on a computer. Inside the site's home region (state, audience.ts inHomeRegion): any
- *    interaction or time on screen. Outside it: an interaction plus 15s on screen. Either: a second page, a login or
- *    a click out. Counted after any interaction, any time on screen (the tracker
- *    reports after about a second), a second page, a login or a click out.
+ *  - light: any other new visit on a computer. Inside the site's home region (state, audience.ts inHomeRegion): an
+ *    interaction plus 5s on screen. Outside it: an interaction plus 15s on screen. Either: a second page after an
+ *    interaction, a login or a click out.
  * Together: 2.9% of real readers' first visits not counted (mostly visits never on screen; they're counted when
  * they come back), and 34% of one-time visits. Phones without a strict sign aren't held yet: the old tracker didn't
  * report time on iPhones, so they couldn't be measured fairly (re-check with the early pings).
@@ -71,7 +70,7 @@ export const STRICT_VISIBLE_MS = 15_000;
  * crawler moves the mouse 24-39s in (6 of 6 on enewspf after 15s), while 86% of real readers on computers touch the
  * page within 15s (salemreporter), so this costs about 0.1% of real readers' first visits.
  */
-export const OUTSIDE_FIRST_TOUCH_MS = 15_000;
+export const OUTSIDE_FIRST_TOUCH_MS = 15_000; // on-screen time before the first touch (tracker's p.v), when sent
 
 export function releasedBy(held: { reason: string; visible: number; engaged: number; engage_ms?: number | null; device?: string | null }): boolean {
   switch (tierOf(held.reason)) {
@@ -98,7 +97,10 @@ export function releasedBy(held: { reason: string; visible: number; engaged: num
       // second page, a login, a click out). Scored: 1 more of 1,310 logged-in readers' first visits, 46 more of 573
       // one-time ones. Inside the region, any touch or any time on screen.
       if (held.reason === 'new_desktop_far') return !!held.engaged && held.visible >= STRICT_VISIBLE_MS;
-      return !!held.engaged || held.visible > 0;
+      // Inside the region: an interaction plus 5s on screen. The crawler now also comes from home-region towns
+      // (Chicago, enewspf, 2026-11-18): one mouse move 10.6s in, then gone before 15s, so the page reported 3.5s.
+      // Since interactions were recorded reliably, every real reader's first visit on a computer had an interaction.
+      return !!held.engaged && held.visible >= LIGHT_VISIBLE_MS;
   }
 }
 
@@ -108,5 +110,11 @@ export function releasedByEvent(reason: string, type: string): boolean {
   return type === 'outbound' && tierOf(reason) !== 'automated' && tierOf(reason) !== 'outside';
 }
 
-/** A second page counts a light hold (people click through; these crawlers load one page). */
-export const releasedByPage = (reason: string) => tierOf(reason) === 'light';
+/** Time on screen that, with an interaction, counts a new computer visit inside the site's home region. */
+export const LIGHT_VISIBLE_MS = 5_000;
+
+/**
+ * A second page counts a light hold if the visitor also interacted: on a computer a person clicks or moves the mouse
+ * to get there, while the crawler now opens a second page without either (Gardner MA, enewspf, 2026-11-18).
+ */
+export const releasedByPage = (reason: string, engaged?: number | boolean) => tierOf(reason) === 'light' && !!engaged;

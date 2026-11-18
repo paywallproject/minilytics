@@ -186,7 +186,9 @@
     try { ms = Math.round(w.performance.now()); } catch (x) {}
     // Sent a moment after the pageview, so it doesn't overtake it (the mouse often moves as the page loads); sent at
     // once if the page closes first.
-    engageMsg = { p: { k: e && e.type, ms: ms } };
+    // Also how long the page had been on screen by then (time in another tab or app doesn't count).
+    var v = shown + (visibleSince ? Date.now() - visibleSince : 0);
+    engageMsg = { p: { k: e && e.type, ms: ms, v: Math.round(v) } };
     var wait = Math.max(0, lastPageviewAt + 800 - Date.now());
     if (wait) setTimeout(sendEngage, wait);
     else sendEngage();
