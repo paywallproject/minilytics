@@ -44,6 +44,33 @@ const isId = (s: unknown): s is string => typeof s === 'string' && /^[\w-]{8,64}
 
 export { belongsTo, normalizePath };
 
+/**
+ * Why would this browser's events be dropped? Open /api/track-check?site=<id> on the device in question. It only
+ * reports on the requesting browser itself, and doesn't remember it as the owner's (only the dashboard does).
+ */
+export async function trackCheck(c: Context<AppEnv>) {
+  const ua = c.req.header('user-agent') ?? '';
+  const cf = cfOf(c);
+  const site = await getSite(c.env.DB, c.req.query('site') ?? '');
+  const checks = {
+    botUserAgent: isBot(ua),
+    unrecognisedBrowser: unrecognised(ua),
+    hostingNetwork: fromHostingNetwork(c),
+    siteFound: !!site,
+    siteRecording: site ? siteOwnerActive(c.env, site) : null,
+    ownerDevice: site ? await isOwnerVisit(c, site) : null,
+  };
+  const dropped = Object.entries(checks)
+    .filter(([k, v]) => (['siteFound', 'siteRecording'].includes(k) ? v === false : v === true))
+    .map(([k]) => k);
+  return c.json({
+    verdict: dropped.length ? `events dropped: ${dropped.join(', ')}` : 'events from this browser are accepted',
+    checks,
+    seenAs: { ...parseUA(ua), country: cf?.country ?? null, city: cf?.city ?? null, asn: cf?.asn ?? null, network: cf?.asOrganization ?? null, timezone: cf?.timezone ?? null },
+    userAgent: ua,
+  });
+}
+
 export async function handleEvent(c: Context<AppEnv>) {
   const raw = await c.req.text();
   if (raw.length > 8192) return c.body(null, 413);

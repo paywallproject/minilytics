@@ -1,6 +1,6 @@
 import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
-import { handleEvent } from './collect';
+import { handleEvent, trackCheck } from './collect';
 import { HELD_KEEP_MS } from './lib/hold';
 import { botStudy, fleetStudy, heldReport } from './held';
 import { refreshAudience, refreshSomeAudiences } from './audience';
@@ -40,6 +40,7 @@ app.use('*', async (c, next) => {
 
 app.use('/api/event', cors({ origin: '*', allowMethods: ['POST', 'OPTIONS'], maxAge: 86400 }));
 app.post('/api/event', handleEvent);
+app.get('/api/track-check', trackCheck);
 app.post('/api/webhooks/dodo/:siteId', handleDodoWebhook);
 app.post('/api/webhooks/stripe/:siteId', handleStripeWebhook);
 app.post('/api/webhooks/polar/:siteId', handlePolarWebhook);
