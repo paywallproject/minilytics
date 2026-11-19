@@ -13,7 +13,7 @@
   var cookieDomain = script.getAttribute('data-domain');
   var VID = 'ml_vid', SID = 'ml_sid', YEAR = 31536000, SESSION = 1800;
 
-  var queued = (w.minilytics && w.minilytics.q) || [];
+  var preload = (w.minilytics && w.minilytics.q) || []; // calls made before this script loaded
   function noop() {}
 
   // Opt yourself out: visit any page with ?ml_ignore=true (undo with ?ml_ignore=false).
@@ -355,5 +355,5 @@
   w.minilytics = api;
 
   pageview();
-  for (var q = 0; q < queued.length; q++) api.apply(null, queued[q]);
+  for (var q = 0; q < preload.length; q++) api.apply(null, preload[q]);
 })();
