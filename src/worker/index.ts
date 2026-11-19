@@ -4,6 +4,7 @@ import { handleEvent, trackCheck } from './collect';
 import { HELD_KEEP_MS } from './lib/hold';
 import { botStudy, fleetStudy, heldReport } from './held';
 import { refreshAudience, refreshSomeAudiences } from './audience';
+import { forgetOldSalts } from './lib/cookieless';
 import { forgetSite, type AppEnv, type Site } from './env';
 import { ADMIN_ID, adminEmail, clearSession, currentUser, emailLogin, googleCallback, googleStart, isHosted, requireUser, setSession, signupOpen, siteAccessSql, siteRole, type SiteRole, type User } from './auth';
 import { billingWebhook, checkout, planInfo } from './billing';
@@ -739,5 +740,7 @@ export default {
     ctx.waitUntil(refreshSomeAudiences(env.DB));
     // Held visits (see lib/hold.ts) are kept a week for checking, then deleted.
     ctx.waitUntil(env.DB.prepare('DELETE FROM held_visits WHERE ts < ?').bind(Date.now() - HELD_KEEP_MS).run());
+    // Cookieless visits' daily salts (lib/cookieless.ts) are deleted once their day is over.
+    ctx.waitUntil(forgetOldSalts(env.DB));
   },
 } satisfies ExportedHandler<AppEnv['Bindings']>;

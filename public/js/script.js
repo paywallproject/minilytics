@@ -12,6 +12,15 @@
   var requireInteraction = script.hasAttribute('data-require-interaction');
   var cookieDomain = script.getAttribute('data-domain');
   var VID = 'ml_vid', SID = 'ml_sid', YEAR = 31536000, SESSION = 1800;
+  // Cookieless until consent (data-consent), for sites whose consent banner must allow analytics cookies first.
+  // Until the reader allows them, nothing is stored on the device: the server identifies the visit for that day only
+  // (src/worker/lib/cookieless.ts). With consentmanager.net, consent is the banner's purpose named Measurement,
+  // Analytics or Statistics (or the one in data-consent-purpose, e.g. "c54"). Other banners call
+  // minilytics('consent', true) or minilytics('consent', false).
+  var consentMode = script.hasAttribute('data-consent');
+  var consentPurpose = script.getAttribute('data-consent-purpose');
+  var consented = !consentMode;
+  var ckId = null, pendingIdentify = null; // today's id from the server while cookieless; a login waiting for consent
 
   var preload = (w.minilytics && w.minilytics.q) || []; // calls made before this script loaded
   function noop() {}
@@ -50,9 +59,10 @@
     }
     return null;
   }
-  var domain = rootDomain();
+  var domain = consented ? rootDomain() : null;
   var newSession = !readCookie(SID);
   function writeCookie(name, value, maxAge) {
+    if (!consented) return;
     d.cookie = name + '=' + encodeURIComponent(value) + '; path=/; max-age=' + maxAge + '; SameSite=Lax' +
       (domain ? '; domain=' + domain : '') + (loc.protocol === 'https:' ? '; Secure' : '');
   }
@@ -64,6 +74,7 @@
     });
   }
   function ids() {
+    if (!consented) return { vid: ckId || 'cookieless', sid: ckId || 'cookieless' }; // the server sets them (ck)
     var vid = readCookie(VID) || uuid();
     var sid = readCookie(SID) || uuid();
     writeCookie(VID, vid, YEAR);
@@ -85,6 +96,8 @@
   }
   var lastPageviewAt = 0;
   function send(type, extra, beacon) {
+    // Who a logged-in reader is waits until they allow analytics.
+    if (type === 'identify' && !consented) { pendingIdentify = extra; return; }
     if (type === 'pageview') lastPageviewAt = Date.now();
     // While a pageview is held, other events wait with it: a goal can fire on its own when the page loads (the
     // PaywallProject plugin reports "paywall shown" on every article, bots included), so it isn't a sign of a
@@ -96,13 +109,18 @@
     var id = ids();
     var body = { w: siteId, t: type, u: cleanUrl(loc.href), vid: id.vid, sid: id.sid, sw: w.screen ? screen.width : 0, v: 2 };
     for (var k in extra) if (extra[k] !== undefined) body[k] = extra[k];
+    var ck = !consented;
+    if (ck) body.ck = 1;
     var json = JSON.stringify(body);
     // text/plain keeps this a "simple" request: no CORS preflight, works with sendBeacon.
     if (beacon && nav.sendBeacon) {
       try { if (nav.sendBeacon(endpoint, new Blob([json], { type: 'text/plain' }))) return; } catch (e) {}
     }
     try {
-      fetch(endpoint, { method: 'POST', body: json, keepalive: true, credentials: 'omit', headers: { 'Content-Type': 'text/plain' } }).catch(noop);
+      var req = fetch(endpoint, { method: 'POST', body: json, keepalive: true, credentials: 'omit', headers: { 'Content-Type': 'text/plain' } });
+      // Cookieless: remember the day's id the server answers with, to keep it if the reader allows cookies later.
+      if (ck) req = req.then(function (r) { return r.json(); }).then(function (j) { if (j && j.vid && !consented) ckId = j.vid; });
+      req.catch(noop);
     } catch (e) {}
   }
 
@@ -279,6 +297,7 @@
   // appear on the page, not just on click, because other scripts (e.g. Umami's click tracking) may copy
   // the href and navigate before our click handler runs.
   function tagCheckoutLink(a) {
+    if (!consented && !ckId) return; // cookieless, before the server has given today's id
     try {
       var u = new URL(a.href);
       var att = attribution();
@@ -350,10 +369,63 @@
     if (cmd === 'goal' || cmd === 'track') goal(a, b);
     else if (cmd === 'identify' && a) send('identify', { p: { user_id: a.user_id || a.id, email: a.email, name: a.name } });
     else if (cmd === 'pageview') { lastPage = null; pageview(); }
+    else if (cmd === 'consent' && consentMode) setConsent(!!a);
   }
   api.attribution = attribution;
   w.minilytics = api;
 
-  pageview();
-  for (var q = 0; q < preload.length; q++) api.apply(null, preload[q]);
+  // ---- consent (data-consent only)
+  function setConsent(yes) {
+    if (yes && !consented) {
+      consented = true;
+      domain = rootDomain();
+      // Keep the visit going under today's id, unless the reader already has an id from an earlier consent.
+      if (ckId && !readCookie(VID)) { writeCookie(VID, ckId, YEAR); writeCookie(SID, ckId, SESSION); }
+      if (pendingIdentify) { var p = pendingIdentify; pendingIdentify = null; send('identify', p); }
+    } else if (!yes && consented) {
+      writeCookie(VID, '', 0); writeCookie(SID, '', 0); writeCookie('ml_y', '', 0);
+      consented = false;
+      ckId = null;
+    }
+  }
+  // consentmanager.net: the reader's choice for the measurement purpose, or null while the banner isn't ready.
+  function cmpChoice() {
+    try {
+      var c = w.__cmp('getCMPData');
+      if (!c || !c.purposeConsents || !c.purposesList) return null;
+      var id = consentPurpose;
+      for (var i = 0; !id && i < c.purposesList.length; i++) if (/measur|analytic|statist/i.test(c.purposesList[i].name || '')) id = c.purposesList[i].id;
+      return !!(id && c.purposeConsents[id]);
+    } catch (e) { return null; }
+  }
+  // Waits up to 2.5s for the banner's answer before the first pageview, so a reader who allowed cookies on an earlier
+  // visit isn't counted cookieless first. Then follows the reader's changes.
+  function watchConsent(done) {
+    var tries = 0;
+    (function look() {
+      var has = typeof w.__cmp === 'function', choice = has ? cmpChoice() : null;
+      var manual = !has && preload.some(function (c) { return c[0] === 'consent'; });
+      if (choice === null && !manual && ++tries <= 25) return setTimeout(look, 100);
+      if (choice !== null) setConsent(choice);
+      if (has) {
+        try {
+          ['settings', 'consent', 'consentapproved', 'consentrejected', 'consentcustom'].forEach(function (ev) {
+            w.__cmp('addEventListener', [ev, function () { var c = cmpChoice(); if (c !== null) setConsent(c); }, false], null);
+          });
+        } catch (e) {}
+      }
+      done();
+    })();
+  }
+  // A consent call made before this script loaded applies before the first pageview; other calls after it.
+  function preloaded(consent) {
+    for (var q = 0; q < preload.length; q++) if ((preload[q][0] === 'consent') === consent) api.apply(null, preload[q]);
+  }
+  function start() {
+    preloaded(true);
+    pageview();
+    preloaded(false);
+  }
+  if (consentMode) watchConsent(start);
+  else start();
 })();

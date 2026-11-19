@@ -3,7 +3,8 @@ import { belongsTo, normalizePath, stripWww } from '../shared/paths';
 import { classify } from '../shared/sources';
 import { siteOwnerActive } from './auth';
 import { getSite, type AppEnv, type Site } from './env';
-import { isOwnerVisit } from './owner';
+import { clientIp, isOwnerVisit } from './owner';
+import { cookielessId } from './lib/cookieless';
 import { isHostingAsn } from './lib/datacenter';
 import { botSignals } from './lib/signals';
 import { holdReason, releasedBy, releasedByEvent, releasedByPage } from './lib/hold';
@@ -21,6 +22,8 @@ interface Payload {
   r?: string;
   vid: string;
   sid: string;
+  /** 1: a cookieless visit (tracker's data-consent mode, before consent); vid and sid are set here. */
+  ck?: number;
   sw?: number;
   n?: string;
   p?: Record<string, unknown>;
@@ -72,8 +75,26 @@ export async function trackCheck(c: Context<AppEnv>) {
 }
 
 export async function handleEvent(c: Context<AppEnv>) {
-  const raw = await c.req.text();
+  let raw = await c.req.text();
   if (raw.length > 8192) return c.body(null, 413);
+  // A cookieless visit (lib/cookieless.ts): the tracker stores nothing, so the server gives it today's id. Set
+  // before anything else, so sessions, the hold and held visits all see the same id on every event.
+  let ck: string | null = null;
+  try {
+    const b = JSON.parse(raw);
+    if (b && b.ck === 1 && isId(b.w)) {
+      ck = await cookielessId(c.env.DB, b.w, clientIp(c), c.req.header('user-agent') ?? '');
+      b.vid = b.sid = ck;
+      raw = JSON.stringify(b);
+    }
+  } catch {}
+  const res = await recordEvent(c, raw);
+  // The tracker keeps today's id, to carry it into its cookies if the reader allows them later in the visit.
+  if (ck && res.status === 202) return c.json({ vid: ck, sid: ck }, 202);
+  return res;
+}
+
+async function recordEvent(c: Context<AppEnv>, raw: string) {
   let body: Payload;
   try {
     body = JSON.parse(raw);
@@ -115,6 +136,7 @@ export async function handleEvent(c: Context<AppEnv>) {
         })
       : [];
   if (body.t === 'pageview' && body.v === undefined) signals.push('old_script');
+  if (body.t === 'pageview' && body.ck === 1) signals.push('cookieless'); // not a bot sign: marks the visit
   if (body.t === 'pageview' && body.gs === 1) signals.push('soft_gpu'); // measuring only
   const db = c.env.DB;
 
