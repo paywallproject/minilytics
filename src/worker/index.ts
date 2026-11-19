@@ -461,6 +461,15 @@ app.post('/api/admin/audience/:siteId', requireUser, async (c) => {
   return c.json(r.results);
 });
 
+// Admin: forget the browsers remembered as the admin's own (owner.ts), so the admin can test tracking on their
+// own sites. Opening the dashboard in a browser remembers it again.
+app.post('/api/admin/forget-devices', requireUser, async (c) => {
+  const user = c.get('user');
+  if (!user.admin) return c.json({ error: 'Not available' }, 403);
+  const r = await c.env.DB.prepare("DELETE FROM owner_devices WHERE owner IN (?, '')").bind(user.id).run();
+  return c.json({ forgotten: r.meta.changes ?? 0 });
+});
+
 // Admin research for the proxy-bot hold (see held.ts): aggregate counts, no personal data.
 app.get('/api/admin/bot-study', requireUser, async (c) => {
   if (!c.get('user').admin) return c.json({ error: 'Not available' }, 403);
