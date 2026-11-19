@@ -13,7 +13,7 @@
  *  - strict: browser timezone doesn't match the IP's location (2.2% of real readers vs 24% of one-time), old
  *    Chrome (0.3% vs 7.3%), no client hints (0.1% vs 2.8%), Linux on a computer (0.6% vs 3.5%), first page deep in
  *    an archive (0% vs 4.3%). Counted after 15s on screen (a touch alone isn't enough: the crawler fakes one); on a
- *    computer, 15s on screen plus an interaction.
+ *    computer, 15s on screen plus an interaction with input in 2+ separate seconds.
  *  - outside: from a country the site's real readers don't come from (audience.ts), any device. Counted after an
  *    interaction within 15s of loading, input in 2+ separate seconds, and 15s on screen, or a login. 1.0% of real readers' first visits vs 11%
  *    of one-time.
@@ -102,7 +102,11 @@ export function releasedBy(held: { reason: string; visible: number; engaged: num
       // UTC 2026-11-18): untouched strict-sign computer visits counted 35, all one-time; 0 of the real readers'
       // computer first visits were untouched. On the larger earlier sample (interactions partly lost then), at most
       // 4 real readers' first visits of ~1,700; they're counted when they come back.
-      if (held.device === 'Desktop') return !!held.engaged && held.visible >= STRICT_VISIBLE_MS;
+      // Since 2026-11-19, also input in 2+ separate seconds (as outside the audience): a crawler on Linux desktops
+      // with a fake Google referrer, a different US state each visit, touched once and sat 15s (enewspf, ~20 counted
+      // in 8h). Scored on counted strict-sign computer visits, every site, 11:20 Nov 18 - 00:20 Nov 19 UTC: input in
+      // at most 1 second (or none reported) 2 came back vs 212 one-time; timezone mismatch alone 0 vs 148.
+      if (held.device === 'Desktop') return !!held.engaged && held.visible >= STRICT_VISIBLE_MS && (held.act_secs ?? 0) >= OUTSIDE_ACT_SECS;
       return held.visible >= STRICT_VISIBLE_MS;
     case 'light':
       // From outside the site's home region, time alone isn't enough (crawlers on home connections across the
