@@ -60,6 +60,8 @@ it('stores nothing until the banner allows measurement, then keeps the visit goi
   const pv = t.sent.find((e) => e.t === 'pageview');
   expect(pv.ck).toBe(1);
   expect(t.cookie()).toBe('');
+  expect(pv.fl).toBeUndefined(); // no browser setup hash before consent
+  expect(pv.gs).toBeUndefined();
   await flush(); await flush(); // the server's answer: today's id
 
   t.cmp!.measurement = true;

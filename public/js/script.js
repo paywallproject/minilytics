@@ -165,7 +165,8 @@
     lastPage = page;
     pings = 0;
     var data = { r: firstView ? d.referrer : '', tz: firstView ? timeZone() : undefined };
-    if (firstView && newSession) { var f = fleet(); data.fl = f[0]; if (f[1]) data.gs = 1; data.pa = pageAge(); }
+    // The browser setup hash reads details of the device, so it waits for consent where the site asks for it.
+    if (firstView && newSession) { if (consented) { var f = fleet(); data.fl = f[0]; if (f[1]) data.gs = 1; } data.pa = pageAge(); }
     // A new visit with no referrer and no campaign tags is where page-loading bots hide (they arrive "Direct" and
     // never touch the page). Hold its pageview until the first sign of a person: moving the mouse, scrolling,
     // tapping, clicking or typing. Visits from anywhere else are counted straight away. Only on sites that opt in.
