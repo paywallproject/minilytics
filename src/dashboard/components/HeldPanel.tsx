@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { qs } from '../lib/api';
 import { useDash } from '../lib/context';
 import { fmtDateTime, fmtNumber } from '../lib/format';
@@ -7,6 +8,7 @@ type Row = { label: string | null; n: number };
 interface HeldReport {
   totals: { reason: string; counted: number; n: number }[];
   cameBack: number;
+  sample: number;
   botd: { counted: number; label: string; n: number }[];
   releasedHow: Row[];
   notCounted: Record<'network' | 'city' | 'os' | 'page' | 'visible' | 'engaged', Row[]>;
@@ -44,9 +46,29 @@ const path = (u: string | null) => {
 
 /** Admin only: what the proxy-bot hold held back, to check no real readers are among the visits it didn't count. */
 export function HeldPanel() {
+  const [open, setOpen] = useState(false);
+  if (!open) {
+    return (
+      <div className="card mt-5 flex items-center justify-between gap-3 p-4">
+        <div>
+          <div className="text-sm font-medium">Held as likely bots</div>
+          <p className="mt-1 text-xs text-stone-500">Only you and staff see this. Loaded on request: it's a heavy check on busy sites.</p>
+        </div>
+        <button type="button" className="btn shrink-0 text-xs" onClick={() => setOpen(true)}>
+          Show
+        </button>
+      </div>
+    );
+  }
+  return <HeldReportCard />;
+}
+
+function HeldReportCard() {
   const { site, q, reloadKey } = useDash();
-  const { data } = useApi<HeldReport>(`/api/sites/${site.id}/held?${qs(q)}`, reloadKey);
-  if (!data) return null;
+  const { data, loading, error } = useApi<HeldReport>(`/api/sites/${site.id}/held?${qs(q)}`, reloadKey);
+  if (!data) {
+    return <div className="card mt-5 p-4 text-xs text-stone-500">{error ? `Couldn't load the held visits: ${error}` : loading ? 'Loading held visits…' : null}</div>;
+  }
   const sum = (counted: number) => data.totals.filter((t) => t.counted === counted).reduce((a, t) => a + t.n, 0);
   const held = sum(0) + sum(1);
   if (!held) return null;
@@ -68,10 +90,15 @@ export function HeldPanel() {
         Only you and staff see this. A new visitor's first visit on a computer, or any first visit that looks automated, waits for a sign
         that someone saw the page (looks automated: interacting plus a few seconds, or 15 seconds on screen; otherwise any interaction or
         time on screen, a second page, a login or a click out). {fmtNumber(held)} were held: {fmtNumber(sum(1))} turned out to be people
-        and were counted, {fmtNumber(sum(0))} weren't counted. Of those, {fmtNumber(data.cameBack)} came back later and were counted then
+        and were counted, {fmtNumber(sum(0))} weren't counted. Of {sum(0) > data.sample ? `the latest ${fmtNumber(data.sample)} of those` : 'those'}, {fmtNumber(data.cameBack)} came back later and were counted then
         (real readers whose first visit was missed; bots don't come back). Check the list below for anything else that looks like a real
         reader.
       </p>
+      {sum(0) > data.sample && (
+        <p className="mt-1 text-xs text-stone-500">
+          Time on screen, interaction, network, place, OS and page cover the latest {fmtNumber(data.sample)} not counted.
+        </p>
+      )}
       <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {list('Why held (not counted)', data.totals.filter((t) => !t.counted).map((t) => ({ label: t.reason, n: t.n })), (l) => REASONS[l ?? ''] ?? l ?? '–')}
         {list('Counted after all, because', data.releasedHow)}

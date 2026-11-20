@@ -4,14 +4,19 @@ import type { Ctx } from './stats';
  * Admin check of the proxy-bot hold (lib/hold.ts): how many new visits were held, how many turned out to be people,
  * and what the ones that weren't counted looked like, to spot real readers among them.
  */
+/** How many of the latest not-counted visits the breakdowns and the came-back check look at. */
+export const HELD_SAMPLE = 3000;
+const SAMPLE = HELD_SAMPLE;
+
 export async function heldReport(ctx: Ctx) {
   const { db, site, range } = ctx;
   const where = `site_id = ? AND ts >= ? AND ts < ? AND reason != 'early_goal'`;
   const bind = [site.id, range.from, range.to];
+  // The breakdowns read each visit's JSON, so on a busy site (tens of thousands held a week) they look at the latest
+  // SAMPLE not counted; reading them all took ~25s on salemreporter.com and blocked D1 for every other request.
+  const notCounted = `(SELECT * FROM held_visits WHERE ${where} AND released_at IS NULL ORDER BY ts DESC LIMIT ${SAMPLE})`;
   const top = (expr: string) =>
-    db
-      .prepare(`SELECT ${expr} AS label, COUNT(*) AS n FROM held_visits WHERE ${where} AND released_at IS NULL GROUP BY 1 ORDER BY n DESC LIMIT 15`)
-      .bind(...bind);
+    db.prepare(`SELECT ${expr} AS label, COUNT(*) AS n FROM ${notCounted} GROUP BY 1 ORDER BY n DESC LIMIT 15`).bind(...bind);
   const [totals, network, city, os, page, visible, engaged, recent, releasedHow, cameBack, botd] = await db.batch([
     db
       .prepare(`SELECT reason, released_at IS NOT NULL AS counted, COUNT(*) AS n FROM held_visits WHERE ${where} GROUP BY 1, 2 ORDER BY n DESC`)
@@ -39,9 +44,8 @@ export async function heldReport(ctx: Ctx) {
     // visit the hold missed; these crawlers don't come back).
     db
       .prepare(
-        `SELECT COUNT(*) AS n FROM held_visits h
-         WHERE h.site_id = ? AND h.ts >= ? AND h.ts < ? AND h.reason != 'early_goal' AND h.released_at IS NULL
-           AND EXISTS (SELECT 1 FROM sessions s WHERE s.site_id = h.site_id AND s.visitor_id = json_extract(h.body, '$.vid') AND s.started_at > h.ts)`,
+        `SELECT COUNT(*) AS n FROM ${notCounted} h
+         WHERE EXISTS (SELECT 1 FROM sessions s WHERE s.site_id = h.site_id AND s.visitor_id = json_extract(h.body, '$.vid') AND s.started_at > h.ts)`,
       )
       .bind(...bind),
     // The open-source bot detector's verdict, for held visits counted after all and not counted.
@@ -55,6 +59,7 @@ export async function heldReport(ctx: Ctx) {
   return {
     botd: botd.results,
     totals: totals.results,
+    sample: SAMPLE,
     cameBack: (cameBack.results[0] as { n: number } | undefined)?.n ?? 0,
     releasedHow: releasedHow.results,
     notCounted: { network: network.results, city: city.results, os: os.results, page: page.results, visible: visible.results, engaged: engaged.results },
