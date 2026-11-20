@@ -403,14 +403,7 @@ async function ownBreakdown(ctx: Ctx, dim: string, lim: number): Promise<Breakdo
         )
         .bind(...params),
       // Revenue from customers who viewed the page during the period.
-      db
-        .prepare(
-          `SELECT pv.label, SUM(p.amount) AS revenue, COUNT(DISTINCT p.visitor_id) AS customers
-           FROM (SELECT DISTINCT e.path AS label, e.visitor_id ${base}) pv
-           JOIN payments p ON p.site_id = ? AND p.visitor_id = pv.visitor_id AND p.ts >= ? AND p.ts < ?
-           GROUP BY pv.label`,
-        )
-        .bind(...params, ctx.site.id, ctx.range.from, ctx.range.to),
+      eventRevenue(ctx, 'path', 'pageview'),
     ]);
     return merge(v.results as any[], r.results as any[]);
   }
@@ -428,19 +421,37 @@ async function ownBreakdown(ctx: Ctx, dim: string, lim: number): Promise<Breakdo
            GROUP BY label ORDER BY visitors DESC LIMIT ${lim}`,
         )
         .bind(...params),
-      db
-        .prepare(
-          `SELECT g.label, SUM(p.amount) AS revenue, COUNT(DISTINCT p.visitor_id) AS customers
-           FROM (SELECT DISTINCT e.name AS label, e.visitor_id ${base}) g
-           JOIN payments p ON p.site_id = ? AND p.visitor_id = g.visitor_id AND p.ts >= ? AND p.ts < ?
-           GROUP BY g.label`,
-        )
-        .bind(...params, ctx.site.id, ctx.range.from, ctx.range.to),
+      eventRevenue(ctx, 'name', type),
     ]);
     return merge(v.results as any[], r.results as any[]);
   }
 
   throw new Error(`unknown dimension ${dim}`);
+}
+
+/**
+ * Revenue per page (or goal) from customers who viewed it (or hit it) during the period. Starts from the period's
+ * paying visitors and walks their own sessions and events by index, instead of every event in the period: on a busy
+ * site that was most of the Pages panel's database time, enough to overload D1.
+ */
+function eventRevenue(ctx: Ctx, col: 'path' | 'name', type: string) {
+  const f = filterSql(ctx.filters);
+  const { site, range } = ctx;
+  return ctx.db
+    .prepare(
+      `WITH payers AS (
+         SELECT visitor_id, SUM(amount) AS amount FROM payments
+         WHERE site_id = ? AND ts >= ? AND ts < ? AND visitor_id IS NOT NULL GROUP BY visitor_id)
+       SELECT ev.label, SUM(payers.amount) AS revenue, COUNT(*) AS customers
+       FROM (SELECT DISTINCT e.${col} AS label, e.visitor_id
+             FROM payers
+             JOIN sessions s ON s.site_id = ? AND s.visitor_id = payers.visitor_id
+             JOIN events e ON e.site_id = s.site_id AND e.session_id = s.id
+             WHERE e.type = ? AND e.ts >= ? AND e.ts < ?${f.sql}) ev
+       JOIN payers ON payers.visitor_id = ev.visitor_id
+       GROUP BY ev.label`,
+    )
+    .bind(site.id, range.from, range.to, site.id, type, range.from, range.to, ...f.params);
 }
 
 function merge(visits: any[], revenue: any[]): BreakdownRow[] {

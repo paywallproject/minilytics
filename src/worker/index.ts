@@ -2,6 +2,7 @@ import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { handleEvent, trackCheck } from './collect';
 import { HELD_KEEP_MS } from './lib/hold';
+import { retryingD1 } from './lib/d1retry';
 import { botStudy, fleetStudy, heldReport } from './held';
 import { refreshAudience, refreshSomeAudiences } from './audience';
 import { forgetOldSalts } from './lib/cookieless';
@@ -732,9 +733,11 @@ app.all('*', async (c) => {
 });
 
 export default {
-  fetch: app.fetch,
+  // Queries D1 turns away when it's busy are tried again (lib/d1retry.ts), so a busy moment doesn't lose a visit.
+  fetch: (req: Request, env: AppEnv['Bindings'], ctx: ExecutionContext) => app.fetch(req, { ...env, DB: retryingD1(env.DB) }, ctx),
   // Hourly Cron Trigger (wrangler.jsonc): sends the email reports that are due and clears old held visits.
-  async scheduled(_controller: ScheduledController, env: AppEnv['Bindings'], ctx: ExecutionContext) {
+  async scheduled(_controller: ScheduledController, rawEnv: AppEnv['Bindings'], ctx: ExecutionContext) {
+    const env = { ...rawEnv, DB: retryingD1(rawEnv.DB) };
     ctx.waitUntil(runScheduledReports(env));
     // A few sites' audiences (where their real readers are, for the hold), oldest first.
     ctx.waitUntil(refreshSomeAudiences(env.DB));
