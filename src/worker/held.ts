@@ -41,11 +41,13 @@ export async function heldReport(ctx: Ctx) {
       )
       .bind(...bind),
     // Self-check: not counted, but the same browser came back later and was counted then (a real reader whose first
-    // visit the hold missed; these crawlers don't come back).
+    // visit the hold missed; these crawlers don't come back). Pinned to the visitor index: D1 otherwise walked every later
+    // session of the site for each held visit (~20s on salemreporter.com).
     db
       .prepare(
         `SELECT COUNT(*) AS n FROM ${notCounted} h
-         WHERE EXISTS (SELECT 1 FROM sessions s WHERE s.site_id = h.site_id AND s.visitor_id = json_extract(h.body, '$.vid') AND s.started_at > h.ts)`,
+         WHERE EXISTS (SELECT 1 FROM sessions s INDEXED BY sessions_visitor
+                       WHERE s.site_id = h.site_id AND s.visitor_id = json_extract(h.body, '$.vid') AND s.started_at > h.ts)`,
       )
       .bind(...bind),
     // The open-source bot detector's verdict, for held visits counted after all and not counted.
